@@ -1,0 +1,26 @@
+# Anchor / Rust build artifacts (includes the program keypair under target/deploy)
+.anchor
+target
+**/*.rs.bk
+
+# Node / Next.js
+node_modules
+app/.next
+app/out
+**/*.tsbuildinfo
+
+# Local env & secrets — never commit
+.env
+.env.local
+.env.*.local
+*-keypair.json
+*.pem
+scripts/.maker.json
+
+# Tooling / OS / editor
+.yarn
+test-ledger
+.claude
+.vercel
+*.log
+.DS_Store
