@@ -64,6 +64,36 @@ pub fn initialize_leaderboard(
 }
 
 #[derive(Accounts)]
+pub struct ResetLeaderboard<'info> {
+    #[account(constraint = authority.key() == leaderboard.authority @ FluxError::Unauthorized)]
+    pub authority: Signer<'info>,
+    #[account(mut, seeds = [LEADERBOARD_SEED], bump = leaderboard.bump)]
+    pub leaderboard: Account<'info, Leaderboard>,
+}
+
+// authority-only: wipe entries/candidates/history and start a fresh epoch
+pub fn reset_leaderboard(
+    ctx: Context<ResetLeaderboard>,
+    epoch_duration: i64,
+    seed_prize: u64,
+) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
+    let lb = &mut ctx.accounts.leaderboard;
+    lb.epoch = 1;
+    lb.start_ts = now;
+    lb.epoch_duration = if epoch_duration > 0 { epoch_duration } else { DEMO_EPOCH_SECS };
+    lb.end_ts = now + lb.epoch_duration;
+    lb.prize_pool = seed_prize;
+    lb.entries = Vec::new();
+    lb.candidates = Vec::new();
+    lb.vrf_pending = false;
+    lb.winner = Pubkey::default();
+    lb.vrf_result = [0u8; 32];
+    lb.history = Vec::new();
+    Ok(())
+}
+
+#[derive(Accounts)]
 pub struct UpdateLeaderboard<'info> {
     pub cranker: Signer<'info>,
     #[account(mut, seeds = [LEADERBOARD_SEED], bump = leaderboard.bump)]

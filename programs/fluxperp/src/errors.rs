@@ -33,7 +33,7 @@ pub enum FluxError {
     InsufficientMargin,
 
     #[msg("Market order found no liquidity")]
-    NoLiquidity,  // §5 ix 9
+    NoLiquidity,
 
     #[msg("Orderbook side is at capacity")]
     OrderbookFull,
@@ -45,7 +45,7 @@ pub enum FluxError {
     #[msg("Trigger not found")]
     TriggerNotFound,
     #[msg("No triggers crossed the current price")]
-    NoTriggersFired,  // §5 ix 13
+    NoTriggersFired,
 
     #[msg("Position health is above the maintenance margin; not liquidatable")]
     NotLiquidatable,

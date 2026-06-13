@@ -298,6 +298,14 @@ pub mod fluxperp {
         instructions::tournament::update_leaderboard(ctx, trader, pnl_bps, realized_pnl, volume)
     }
 
+    pub fn reset_leaderboard(
+        ctx: Context<ResetLeaderboard>,
+        epoch_duration: i64,
+        seed_prize: u64,
+    ) -> Result<()> {
+        instructions::tournament::reset_leaderboard(ctx, epoch_duration, seed_prize)
+    }
+
     pub fn request_tournament_winner(ctx: Context<RequestTournamentWinner>) -> Result<()> {
         instructions::tournament::request_tournament_winner(ctx)
     }
