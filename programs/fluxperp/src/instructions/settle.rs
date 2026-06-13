@@ -40,19 +40,15 @@ pub fn settle_to_l1(
 
 #[commit]
 #[derive(Accounts)]
-#[instruction(market_index: u8)]
 pub struct CommitState<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
-    #[account(mut, seeds = [ORDERBOOK_SEED, &[market_index]], bump = orderbook.bump)]
-    pub orderbook: Account<'info, OrderbookState>,
-    #[account(mut, seeds = [FILL_LOG_SEED, &[market_index]], bump = fill_log.bump)]
-    pub fill_log: Account<'info, FillLog>,
-    #[account(mut, seeds = [PRICE_SEED, &[market_index]], bump = price_feed.bump)]
-    pub price_feed: Account<'info, PriceFeed>,
-    /// CHECK: InsuranceFund on L1 — target of the settle_to_l1 action. Read-only on
-
+    /// CHECK: InsuranceFund on L1 — target of the settle_to_l1 action.
     pub insurance_fund: UncheckedAccount<'info>,
+    // remaining_accounts: the per-user financial accounts to settle to L1
+    // (taker + maker PositionAccount / CollateralAccount pairs). The orderbook,
+    // fill_log, and price_feed stay ER-ephemeral — committing those shared,
+    // high-frequency accounts collides with the live publisher/market-maker (0xa0000000).
 }
 
 pub fn commit_state<'info>(
@@ -61,10 +57,6 @@ pub fn commit_state<'info>(
     insurance_delta: u64,
     protocol_delta: u64,
 ) -> Result<()> {
-    AccountsExit::exit(&ctx.accounts.orderbook, &crate::ID)?;
-    AccountsExit::exit(&ctx.accounts.fill_log, &crate::ID)?;
-    AccountsExit::exit(&ctx.accounts.price_feed, &crate::ID)?;
-
     let data = crate::instruction::SettleToL1 {
         insurance_delta,
         protocol_delta,
@@ -83,14 +75,7 @@ pub fn commit_state<'info>(
         compute_units: 200_000,
     };
 
-    let mut commit_accounts = vec![
-        ctx.accounts.orderbook.to_account_info(),
-        ctx.accounts.fill_log.to_account_info(),
-        ctx.accounts.price_feed.to_account_info(),
-    ];
-    for ai in ctx.remaining_accounts.iter() {
-        commit_accounts.push(ai.clone());
-    }
+    let commit_accounts: Vec<_> = ctx.remaining_accounts.to_vec();
 
     MagicIntentBundleBuilder::new(
         ctx.accounts.payer.to_account_info(),
