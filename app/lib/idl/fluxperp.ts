@@ -256,18 +256,6 @@ export type Fluxperp = {
           "signer": true
         },
         {
-          "name": "orderbook",
-          "writable": true
-        },
-        {
-          "name": "fillLog",
-          "writable": true
-        },
-        {
-          "name": "priceFeed",
-          "writable": true
-        },
-        {
           "name": "insuranceFund"
         },
         {
@@ -3162,6 +3150,59 @@ export type Fluxperp = {
         }
       ],
       "args": []
+    },
+    {
+      "name": "resetLeaderboard",
+      "discriminator": [
+        25,
+        8,
+        195,
+        1,
+        92,
+        28,
+        78,
+        236
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true
+        },
+        {
+          "name": "leaderboard",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  97,
+                  100,
+                  101,
+                  114,
+                  98,
+                  111,
+                  97,
+                  114,
+                  100
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "epochDuration",
+          "type": "i64"
+        },
+        {
+          "name": "seedPrize",
+          "type": "u64"
+        }
+      ]
     },
     {
       "name": "resetOrderbook",

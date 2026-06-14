@@ -250,18 +250,6 @@
           "signer": true
         },
         {
-          "name": "orderbook",
-          "writable": true
-        },
-        {
-          "name": "fill_log",
-          "writable": true
-        },
-        {
-          "name": "price_feed",
-          "writable": true
-        },
-        {
           "name": "insurance_fund"
         },
         {
@@ -3156,6 +3144,59 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "reset_leaderboard",
+      "discriminator": [
+        25,
+        8,
+        195,
+        1,
+        92,
+        28,
+        78,
+        236
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true
+        },
+        {
+          "name": "leaderboard",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  97,
+                  100,
+                  101,
+                  114,
+                  98,
+                  111,
+                  97,
+                  114,
+                  100
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "epoch_duration",
+          "type": "i64"
+        },
+        {
+          "name": "seed_prize",
+          "type": "u64"
+        }
+      ]
     },
     {
       "name": "reset_orderbook",
