@@ -1,5 +1,6 @@
 import Link from "next/link";
 import LandingStats from "../components/LandingStats";
+import Logo from "../components/Logo";
 
 function Icon({ path }: { path: React.ReactNode }) {
   return (
@@ -40,16 +41,14 @@ export default function Home() {
         className="pointer-events-none fixed inset-0 opacity-60"
         style={{
           background:
-            "radial-gradient(60rem 40rem at 50% -10%, rgba(57,255,20,0.10), transparent 70%), radial-gradient(40rem 30rem at 90% 20%, rgba(57,255,20,0.05), transparent 70%)",
+            "radial-gradient(60rem 40rem at 50% -10%, rgba(46,189,133,0.10), transparent 70%), radial-gradient(40rem 30rem at 90% 20%, rgba(46,189,133,0.05), transparent 70%)",
         }}
         aria-hidden
       />
 
       {}
       <header className="relative z-10 mx-auto max-w-6xl flex items-center justify-between px-6 py-5">
-        <span className="text-long font-bold tracking-tight text-lg drop-shadow-[0_0_10px_rgba(57,255,20,0.5)]">
-          FluxPerp
-        </span>
+        <Logo className="scale-110 origin-left" />
         <nav className="flex items-center gap-2 text-2xs">
           <Link href="/trade" className="px-3 h-8 grid place-items-center rounded-md text-muted hover:text-txt transition-colors">
             Trade
@@ -74,7 +73,7 @@ export default function Home() {
         </div>
         <h1 className="text-5xl sm:text-6xl font-bold tracking-tight leading-[1.05] text-balance">
           Perp trading at{" "}
-          <span className="text-long drop-shadow-[0_0_18px_rgba(57,255,20,0.45)]">ER speed.</span>
+          <span className="text-long drop-shadow-[0_0_18px_rgba(46,189,133,0.45)]">ER speed.</span>
           <br />
           Settled on Solana.
         </h1>
@@ -173,9 +172,9 @@ function ArchArrow({ label }: { label: string }) {
     <div className="flex flex-col items-center justify-center px-2 min-w-[120px]">
       <span className="text-2xs text-long mb-1 font-mono">{label}</span>
       <svg width="100%" height="20" viewBox="0 0 120 20" fill="none" aria-hidden>
-        <path d="M2 10h108" stroke="#39ff14" strokeWidth="1" strokeDasharray="3 3" opacity="0.6" />
-        <path d="M104 5l8 5-8 5" stroke="#39ff14" strokeWidth="1" />
-        <path d="M16 5l-8 5 8 5" stroke="#39ff14" strokeWidth="1" opacity="0.7" />
+        <path d="M2 10h108" stroke="#2ebd85" strokeWidth="1" strokeDasharray="3 3" opacity="0.6" />
+        <path d="M104 5l8 5-8 5" stroke="#2ebd85" strokeWidth="1" />
+        <path d="M16 5l-8 5 8 5" stroke="#2ebd85" strokeWidth="1" opacity="0.7" />
       </svg>
       <span className="text-[9px] text-faint mt-1">atomic bridge</span>
     </div>

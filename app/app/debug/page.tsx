@@ -101,7 +101,7 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
   return (
     <div className="border border-neutral-800 rounded p-3">
       <div className="text-xs text-neutral-500">{label}</div>
-      <div className={`text-lg ${accent ? "text-[#39ff14]" : "text-neutral-200"}`}>{value}</div>
+      <div className={`text-lg ${accent ? "text-[#2ebd85]" : "text-neutral-200"}`}>{value}</div>
     </div>
   );
 }

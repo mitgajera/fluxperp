@@ -1,5 +1,6 @@
 import Link from "next/link";
 import Providers from "../../components/Providers";
+import Logo from "../../components/Logo";
 import StatsBar from "../../components/StatsBar";
 import Orderbook from "../../components/Orderbook";
 import Chart from "../../components/Chart";
@@ -17,10 +18,8 @@ export default function TradePage() {
       <div className="h-screen flex flex-col bg-surface-0 text-txt overflow-hidden">
         {}
         <header className="h-12 shrink-0 flex items-center gap-6 px-4 border-b border-line bg-surface-1">
-          <Link href="/" className="flex items-center gap-2 group">
-            <span className="text-long font-bold tracking-tight text-base drop-shadow-[0_0_8px_rgba(57,255,20,0.5)]">
-              FluxPerp
-            </span>
+          <Link href="/" className="flex items-center gap-2 group opacity-95 hover:opacity-100 transition-opacity">
+            <Logo />
           </Link>
           <nav className="flex items-center gap-1 text-2xs">
             <span className="px-3 h-7 grid place-items-center rounded bg-surface-3 text-txt">Trade</span>
