@@ -26,12 +26,28 @@ export function toFixed6(n: number): anchor.BN {
   return new anchor.BN(Math.round(n * 1_000_000));
 }
 
+// Binance spot as the perp oracle (e.g. SOLUSDT, BTCUSDT). Try the public market-data host
+// first — api.binance.com returns 451 from many cloud/US IPs (e.g. Render), but
+// data-api.binance.vision is not geo-restricted.
+const BINANCE_HOSTS = ["https://data-api.binance.vision", "https://api.binance.com", "https://api1.binance.com"];
+
 export async function fetchSpot(product: string): Promise<number> {
-  // Binance spot as the perp oracle (e.g. SOLUSDT, BTCUSDT)
-  const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${product}`);
-  if (!res.ok) throw new Error(`spot ${product} ${res.status}`);
-  const j: any = await res.json();
-  return parseFloat(j.price);
+  let lastErr = "";
+  for (const host of BINANCE_HOSTS) {
+    try {
+      const res = await fetch(`${host}/api/v3/ticker/price?symbol=${product}`);
+      if (!res.ok) {
+        lastErr = `${host} ${res.status}`;
+        continue;
+      }
+      const j: any = await res.json();
+      const p = parseFloat(j.price);
+      if (p > 0) return p;
+    } catch (e) {
+      lastErr = `${host} ${(e as Error).message}`;
+    }
+  }
+  throw new Error(`spot ${product} unavailable (${lastErr})`);
 }
 
 export function erProgram(wallet: anchor.Wallet): Program<Fluxperp> {

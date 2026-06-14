@@ -212,33 +212,17 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
     // (services down / RPC degraded). A genuine new mark resets staleness; a repeated
     // (frozen) value is ignored so the synthetic walk below can take over. Real data always
     // wins the moment it resumes.
-    const synth = { mark6: 0, mark: SEED_BASE[market] ?? 68, real: 0, at: Date.now(), tmpl: null as PriceFeed | null, book: null as OrderbookState | null };
+    // center = the last real on-chain value; the synthetic walk only jitters AROUND it, so it
+    // never climbs toward a different target and fights the feed (that caused the sawtooth).
+    const synth = { mark6: 0, mark: SEED_BASE[market] ?? 68, center: SEED_BASE[market] ?? 68, at: Date.now(), tmpl: null as PriceFeed | null, book: null as OrderbookState | null };
     const isStale = () => Date.now() - synth.at >= 6000;
 
-    // Anchor the fallback to the real Binance spot for this market so the perp price stays
-    // close to actual even when the publisher is offline.
-    const anchorReal = async () => {
-      const sym = BINANCE_SYM[market];
-      if (!sym) return;
-      try {
-        const r = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`, { cache: "no-store" });
-        if (!r.ok) return;
-        const p = parseFloat(((await r.json()) as { price?: string }).price ?? "0");
-        if (p > 0) {
-          synth.real = p;
-          if (synth.mark6 === 0) synth.mark = p; // no real feed yet — start at the real price
-        }
-      } catch {
-        /* transient */
-      }
-    };
-    anchorReal();
-    const anchorId = setInterval(anchorReal, 10000);
     const onRealPrice = (pf: PriceFeed) => {
       const m6 = pf.markPrice.toNumber();
       if (m6 === synth.mark6) return; // frozen — let the synthetic engine drive
       synth.mark6 = m6;
       synth.mark = m6 / 1e6;
+      synth.center = synth.mark; // jitter around the actual feed value, not some other anchor
       synth.at = Date.now();
       synth.tmpl = pf;
       setPrice(pf);
@@ -272,9 +256,8 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
     // synthetic walk: drives price, chart, order book and trades whenever the feed is stale
     const synthId = setInterval(() => {
       if (!isStale()) return; // real feed is live — nothing to do
-      // hug the real Binance price (strong reversion + small jitter) so it tracks actual
-      const target = synth.real || SEED_BASE[market] || synth.mark;
-      synth.mark = Math.max(1, synth.mark + (Math.random() - 0.5) * synth.mark * 0.0008 + (target - synth.mark) * 0.06);
+      // jitter gently around the last real value (center) — never chase a different target
+      synth.mark = Math.max(1, synth.mark + (Math.random() - 0.5) * synth.mark * 0.0008 + (synth.center - synth.mark) * 0.05);
       const m6 = Math.round(synth.mark * 1e6);
       setPrice(synthFeed(market, m6, synth.tmpl));
       pushCandle(setCandles, synth.mark);
@@ -298,7 +281,6 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
       uR();
       clearInterval(pollId);
       clearInterval(synthId);
-      clearInterval(anchorId);
       clearInterval(ping);
       clearInterval(persist);
       if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisible);
@@ -803,7 +785,6 @@ async function ensureDelegated(p: Program<Fluxperp>, user: PublicKey, mkt: numbe
 const CANDLE_STORE = "fluxperp:candles:";
 // cold-start fallback prices (only used until the real Binance-backed feed arrives)
 const SEED_BASE: Record<number, number> = { [MARKET_SOL]: 71, [MARKET_BTC]: 65700 };
-const BINANCE_SYM: Record<number, string> = { [MARKET_SOL]: "SOLUSDT", [MARKET_BTC]: "BTCUSDT" };
 
 // Generate a realistic candle history so the chart is never blank — used for a fresh
 // visitor (no persisted history) or when the live price feed isn't publishing yet.
