@@ -1,6 +1,7 @@
 import Link from "next/link";
 import LandingStats from "../components/LandingStats";
 import Logo from "../components/Logo";
+import PriceTicker from "../components/PriceTicker";
 
 function Icon({ path }: { path: React.ReactNode }) {
   return (
@@ -142,6 +143,10 @@ export default function Home() {
           Start Trading
         </Link>
       </section>
+
+      <div className="relative z-10">
+        <PriceTicker />
+      </div>
 
       <footer className="relative z-10 border-t border-line">
         <div className="mx-auto max-w-6xl px-6 py-6 flex items-center justify-between text-2xs text-faint">

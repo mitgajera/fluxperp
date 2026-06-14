@@ -8,6 +8,8 @@ import type { PortfolioMargin } from "../lib/portfolio";
 import SessionKeyButton from "./SessionKeyButton";
 import FillToast from "./FillToast";
 import Logo from "./Logo";
+import PriceTicker from "./PriceTicker";
+import { TokenIcon } from "./TokenIcon";
 
 const usdf = (n: number) => usd(Math.round(n * 1e6));
 
@@ -43,8 +45,8 @@ export default function PortfolioScreen() {
   };
 
   return (
-    <div className="min-h-screen bg-surface-0 text-txt">
-      <header className="h-12 flex items-center gap-6 px-4 border-b border-line bg-surface-1">
+    <div className="min-h-screen flex flex-col bg-surface-0 text-txt">
+      <header className="h-12 flex items-center gap-6 px-4 border-b border-line bg-surface-1 shrink-0">
         <Link href="/" className="opacity-95 hover:opacity-100 transition-opacity">
           <Logo />
         </Link>
@@ -62,7 +64,7 @@ export default function PortfolioScreen() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-6 py-8 space-y-6">
+      <main className="flex-1 w-full mx-auto max-w-5xl px-6 py-8 space-y-6">
         <h1 className="text-xl font-semibold">Portfolio</h1>
 
         {!sessionPubkey ? (
@@ -181,6 +183,7 @@ export default function PortfolioScreen() {
           </>
         )}
       </main>
+      <PriceTicker />
       <FillToast />
     </div>
   );
@@ -228,7 +231,10 @@ function PortfolioMarginPanel({ pm }: { pm: PortfolioMargin | null }) {
             </div>
             {pm.legs.map((l) => (
               <div key={l.market} className="grid grid-cols-4 h-9 items-center font-mono text-2xs tabular-nums">
-                <span className="text-txt">{l.symbol}-PERP</span>
+                <span className="text-txt flex items-center gap-2">
+                  <TokenIcon symbol={l.symbol} size={15} />
+                  {l.symbol}-PERP
+                </span>
                 <span className={`text-right ${l.side === "long" ? "text-long" : "text-short"}`}>{l.side.toUpperCase()}</span>
                 <span className="text-right text-muted">{usdf(l.notional)}</span>
                 <span className={`text-right ${l.upnl >= 0 ? "text-long" : "text-short"}`}>{signedUsd(Math.round(l.upnl * 1e6))}</span>

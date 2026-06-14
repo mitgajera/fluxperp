@@ -9,6 +9,22 @@ import { usd } from "../lib/format";
 import type { Leaderboard } from "../lib/types";
 import SessionKeyButton from "./SessionKeyButton";
 import Logo from "./Logo";
+import PriceTicker from "./PriceTicker";
+
+const MEDAL = ["#f4b728", "#c0c5ce", "#cd7f32"]; // gold / silver / bronze
+
+function Rank({ i }: { i: number }) {
+  if (i < 3)
+    return (
+      <span
+        className="grid place-items-center h-5 w-5 rounded-full text-[10px] font-bold text-black"
+        style={{ background: MEDAL[i] }}
+      >
+        {i + 1}
+      </span>
+    );
+  return <span className="text-faint pl-1.5">{i + 1}</span>;
+}
 
 const short = (k: { toBase58: () => string }) => {
   const s = k.toBase58();
@@ -53,8 +69,8 @@ export default function LeaderboardScreen() {
   const history = useMemo(() => (lb ? [...lb.history].reverse() : []), [lb]);
 
   return (
-    <div className="min-h-screen bg-surface-0 text-txt">
-      <header className="h-12 flex items-center gap-6 px-4 border-b border-line bg-surface-1">
+    <div className="min-h-screen flex flex-col bg-surface-0 text-txt">
+      <header className="h-12 flex items-center gap-6 px-4 border-b border-line bg-surface-1 shrink-0">
         <Link href="/" className="opacity-95 hover:opacity-100 transition-opacity">
           <Logo />
         </Link>
@@ -66,7 +82,7 @@ export default function LeaderboardScreen() {
         <div className="ml-auto"><SessionKeyButton /></div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-6 py-8 space-y-6">
+      <main className="flex-1 w-full mx-auto max-w-5xl px-6 py-8 space-y-6">
         <div className="flex items-end justify-between flex-wrap gap-4">
           <div>
             <h1 className="text-xl font-semibold">Tournament</h1>
@@ -115,7 +131,7 @@ export default function LeaderboardScreen() {
                     key={e.trader.toBase58()}
                     className={`grid grid-cols-12 px-4 h-10 items-center font-mono text-2xs tabular-nums ${winning ? "bg-long/10" : ""}`}
                   >
-                    <span className="col-span-1 text-faint">{i + 1}</span>
+                    <span className="col-span-1"><Rank i={i} /></span>
                     <span className="col-span-6 text-txt flex items-center gap-2">
                       {short(e.trader)}
                       {winning && <span className="px-1.5 py-0.5 rounded bg-long/20 text-long text-[9px] uppercase">Winner</span>}
@@ -158,6 +174,7 @@ export default function LeaderboardScreen() {
           )}
         </div>
       </main>
+      <PriceTicker />
     </div>
   );
 }
