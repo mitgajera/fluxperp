@@ -44,7 +44,9 @@ export default function OrderForm() {
   const fee = (notional * feeBps) / 10000;
   const avail = collateral ? collateral.availableMargin.toNumber() / 1e6 : 0;
   const hasSession = !!sessionPubkey;
-  const canPlace = hasSession && sizeNum > 0 && (type === "market" || effPrice > 0) && margin <= avail;
+  const feedReady = mark > 0;
+  // a market order still needs a live mark to price the fill — block when the feed reads 0
+  const canPlace = hasSession && sizeNum > 0 && effPrice > 0 && margin <= avail;
   const hasPosition = !!position && !("flat" in position.side);
 
   const submit = async () => {
@@ -108,7 +110,7 @@ export default function OrderForm() {
   );
 
   return (
-    <div className="panel flex flex-col p-3 gap-3">
+    <div className="panel flex flex-col p-3 gap-2.5 h-full overflow-y-auto">
       <div className="flex gap-1 bg-surface-2 rounded-md p-0.5 border border-line">
         {(["standard", "advanced"] as const).map((m) => (
           <button
@@ -152,7 +154,7 @@ export default function OrderForm() {
         />
       </Field>
 
-      <Field label="Size (SOL)">
+      <Field label={`Size (${symbol.split("-")[0]})`}>
         <input
           inputMode="decimal"
           value={size}
@@ -162,10 +164,26 @@ export default function OrderForm() {
         />
       </Field>
 
+      <div className="flex gap-1">
+        {[25, 50, 75, 100].map((pct) => {
+          const maxSize = effPrice > 0 ? (avail * leverage) / effPrice : 0;
+          return (
+            <button
+              key={pct}
+              onClick={() => setSize(maxSize > 0 ? ((maxSize * pct) / 100).toFixed(3) : "")}
+              disabled={!hasSession || avail <= 0 || effPrice <= 0}
+              className="flex-1 h-6 rounded bg-surface-2 border border-line text-[10px] tnum text-faint hover:text-txt hover:border-line-strong transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {pct === 100 ? "Max" : `${pct}%`}
+            </button>
+          );
+        })}
+      </div>
+
       <div>
-        <div className="flex justify-between text-2xs text-faint mb-1">
+        <div className="flex justify-between items-center text-2xs text-faint mb-1.5">
           <span>Leverage</span>
-          <span className="tnum text-long">{leverage}×</span>
+          <span className="tnum text-long font-semibold text-sm">{leverage}×</span>
         </div>
         <input
           type="range"
@@ -177,24 +195,32 @@ export default function OrderForm() {
           className="w-full accent-long cursor-pointer"
           aria-label="Leverage"
         />
-        <div className="flex justify-between text-[9px] text-faint mt-0.5 tnum">
+        <div className="flex justify-between text-[9px] text-faint mt-1 tnum">
           {[1, 2, 5, 10].map((n) => (
-            <span key={n}>{n}×</span>
+            <button
+              key={n}
+              onClick={() => setLeverage(Math.min(n, maxLev))}
+              className="hover:text-muted transition-colors cursor-pointer"
+            >
+              {n}×
+            </button>
           ))}
         </div>
       </div>
 
-      <div className="text-2xs space-y-1 border-t border-line pt-2">
-        <Preview label="Order Value" value={notional > 0 ? usd(Math.round(notional * 1e6)) : "—"} />
+      <div className="text-2xs space-y-1.5 rounded-md border border-line bg-surface-2/50 px-3 py-2.5 mt-auto">
+        <Preview label="Order Value" value={notional > 0 ? usd(Math.round(notional * 1e6)) : "—"} accent />
         <Preview label="Est. Margin" value={margin > 0 ? usd(Math.round(margin * 1e6)) : "—"} />
         <Preview label={`Est. Fee (${feeBps} bps)`} value={fee > 0 ? usd(Math.round(fee * 1e6)) : "—"} />
-        <Preview label="Available" value={usd(Math.round(avail * 1e6))} muted />
+        <div className="border-t border-line/60 pt-1.5">
+          <Preview label="Available" value={usd(Math.round(avail * 1e6))} muted />
+        </div>
       </div>
 
       {!hasSession ? (
         <button
           onClick={startSession}
-          className="h-10 rounded-md bg-long text-black text-sm font-semibold hover:bg-long/90 transition-colors cursor-pointer shadow-glow-sm active:scale-[0.99]"
+          className="h-11 rounded-md bg-long text-black text-sm font-semibold hover:bg-long/90 transition-colors cursor-pointer shadow-glow-sm active:scale-[0.99]"
         >
           Start Trading Session
         </button>
@@ -202,7 +228,7 @@ export default function OrderForm() {
         <button
           onClick={submit}
           disabled={!canPlace || busy}
-          className={`h-10 rounded-md text-sm font-semibold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.99] ${
+          className={`h-11 rounded-md text-sm font-semibold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.99] ${
             side === "long"
               ? "bg-long text-black hover:bg-long/90 shadow-glow-sm"
               : "bg-short text-white hover:bg-short/90"
@@ -214,6 +240,9 @@ export default function OrderForm() {
 
       {margin > avail && sizeNum > 0 && hasSession && (
         <p className="text-2xs text-short text-center">Insufficient margin</p>
+      )}
+      {hasSession && !feedReady && (
+        <p className="text-2xs text-faint text-center">Waiting for {symbol} price feed…</p>
       )}
       </>
       ) : (
@@ -296,7 +325,7 @@ export default function OrderForm() {
           </Field>
         )}
 
-        <div className="text-2xs space-y-1 border-t border-line pt-2">
+        <div className="text-2xs space-y-1 border-t border-line pt-2 mt-auto">
           <Preview
             label="Order Value"
             value={advPriceNum > 0 && advTotalNum > 0 ? usd(Math.round(advPriceNum * advTotalNum * 1e6)) : "—"}
@@ -331,58 +360,63 @@ export default function OrderForm() {
       )}
 
       {}
-      <div className="flex gap-2">
-        <button
-          onClick={() => scale(false, 25)}
-          disabled={!hasPosition || busy}
-          className="flex-1 h-8 rounded-md bg-surface-2 border border-line text-2xs uppercase tracking-wide text-muted hover:text-short transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Reduce 25% at market"
-        >
-          Scale −25%
-        </button>
-        <button
-          onClick={() => scale(true, 25)}
-          disabled={!hasPosition || busy}
-          className="flex-1 h-8 rounded-md bg-surface-2 border border-line text-2xs uppercase tracking-wide text-muted hover:text-long transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Add 25% at market"
-        >
-          Scale +25%
-        </button>
-      </div>
-      <div className="flex gap-2">
-        <button
-          onClick={reverse}
-          disabled={!hasPosition || busy}
-          className="flex-1 h-8 rounded-md bg-surface-2 border border-line text-2xs uppercase tracking-wide text-muted hover:text-txt transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          Reverse
-        </button>
-        <button
-          onClick={closeAll}
-          disabled={!hasPosition || busy}
-          className="flex-1 h-8 rounded-md bg-surface-2 border border-line text-2xs uppercase tracking-wide text-muted hover:text-short transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          Close All
-        </button>
-      </div>
+      {hasPosition && (
+        <div className="flex flex-col gap-2 border-t border-line pt-3">
+          <span className="text-[10px] uppercase tracking-wide text-faint">Manage Position</span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => scale(false, 25)}
+              disabled={busy}
+              className="flex-1 h-8 rounded-md bg-surface-2 border border-line text-2xs uppercase tracking-wide text-muted hover:text-short transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Reduce 25% at market"
+            >
+              Scale −25%
+            </button>
+            <button
+              onClick={() => scale(true, 25)}
+              disabled={busy}
+              className="flex-1 h-8 rounded-md bg-surface-2 border border-line text-2xs uppercase tracking-wide text-muted hover:text-long transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Add 25% at market"
+            >
+              Scale +25%
+            </button>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={reverse}
+              disabled={busy}
+              className="flex-1 h-8 rounded-md bg-surface-2 border border-line text-2xs uppercase tracking-wide text-muted hover:text-txt transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Reverse
+            </button>
+            <button
+              onClick={closeAll}
+              disabled={busy}
+              className="flex-1 h-8 rounded-md bg-surface-2 border border-line text-2xs uppercase tracking-wide text-muted hover:text-short transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Close All
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className="flex items-center justify-between bg-surface-2 border border-line rounded-md px-3 h-10 focus-within:border-line-strong transition-colors">
+    <label className="flex items-center justify-between bg-surface-2 border border-line rounded-md px-3 h-9 focus-within:border-line-strong transition-colors">
       <span className="text-2xs text-faint whitespace-nowrap mr-2">{label}</span>
       {children}
     </label>
   );
 }
 
-function Preview({ label, value, muted }: { label: string; value: string; muted?: boolean }) {
+function Preview({ label, value, muted, accent }: { label: string; value: string; muted?: boolean; accent?: boolean }) {
   return (
-    <div className="flex justify-between">
+    <div className="flex justify-between items-baseline">
       <span className="text-faint">{label}</span>
-      <span className={`tnum font-mono ${muted ? "text-muted" : "text-txt"}`}>{value}</span>
+      <span className={`tnum font-mono ${accent ? "text-txt font-medium" : muted ? "text-muted" : "text-txt"}`}>{value}</span>
     </div>
   );
 }
