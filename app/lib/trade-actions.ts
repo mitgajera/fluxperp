@@ -149,8 +149,19 @@ export async function placeOrder(
   p: OrderParams,
   book: OrderbookState
 ) {
-  const { notional, makers } = expectedFill(book, p);
-  const makerMetas = makerPairs(makers, p.market, { excludeOwner: trader });
+  // Always match against the REAL on-chain book (the passed `book` may be the synthetic
+  // liveness fallback, whose orders are owned by the zero key). Refetch fresh to avoid
+  // racing the live market-maker/taker, and pass EVERY distinct maker on the side we sweep
+  // so any order matched has its accounts present (prevents MakerAccountMismatch).
+  let live = book;
+  try {
+    live = (await program.account.orderbookState.fetch(orderbookPda(p.market))) as unknown as OrderbookState;
+  } catch {
+    /* keep the passed book */
+  }
+  const { notional } = expectedFill(live, p);
+  const oppositeSide = p.side === "long" ? live.asks : live.bids;
+  const makerMetas = makerPairs(oppositeSide, p.market, { excludeOwner: trader, topN: 20 });
   const tradeIx = await program.methods
     .placeOrder(
       p.market,
@@ -196,11 +207,7 @@ export async function closePosition(
   closeNotional: number,
   book: OrderbookState
 ) {
-  const opposite = closingSide === "long" ? book.asks : book.bids;
-  const sorted = [...opposite].sort((a, b) =>
-    closingSide === "long" ? a.price.cmp(b.price) : b.price.cmp(a.price)
-  );
-  const makerMetas = makerPairs(sorted, market, { excludeOwner: trader });
+  const makerMetas = await makersFor(program, book, closingSide, market, trader);
   const tradeIx = await program.methods
     .closePosition(market)
     .accountsStrict({
@@ -229,12 +236,23 @@ export async function closePosition(
   );
 }
 
-function makersFor(book: OrderbookState, takerSide: UiSide, market: number, trader: PublicKey) {
-  const opposite = takerSide === "long" ? book.asks : book.bids;
-  const sorted = [...opposite].sort((a, b) =>
-    takerSide === "long" ? a.price.cmp(b.price) : b.price.cmp(a.price)
-  );
-  return makerPairs(sorted, market, { excludeOwner: trader });
+// Refetch the REAL on-chain book (the passed `book` may be the synthetic fallback) and return
+// every distinct maker on the side we'll sweep, so any matched order has its accounts present.
+async function makersFor(
+  program: Program<Fluxperp>,
+  book: OrderbookState,
+  takerSide: UiSide,
+  market: number,
+  trader: PublicKey
+): Promise<AccountMeta[]> {
+  let live = book;
+  try {
+    live = (await program.account.orderbookState.fetch(orderbookPda(market))) as unknown as OrderbookState;
+  } catch {
+    /* keep the passed book */
+  }
+  const opposite = takerSide === "long" ? live.asks : live.bids;
+  return makerPairs(opposite, market, { excludeOwner: trader, topN: 20 });
 }
 
 export async function reversePosition(
@@ -248,7 +266,7 @@ export async function reversePosition(
   book: OrderbookState
 ) {
   const takerSide: UiSide = positionSide === "long" ? "short" : "long";
-  const makerMetas = makersFor(book, takerSide, market, trader);
+  const makerMetas = await makersFor(program, book, takerSide, market, trader);
   const tradeIx = await program.methods
     .reversePosition(market)
     .accountsStrict({
@@ -281,7 +299,7 @@ export async function scalePosition(
   book: OrderbookState
 ) {
   const takerSide: UiSide = increase ? positionSide : positionSide === "long" ? "short" : "long";
-  const makerMetas = makersFor(book, takerSide, market, trader);
+  const makerMetas = await makersFor(program, book, takerSide, market, trader);
   const tradeIx = await program.methods
     .scaleInOut(market, pct, increase)
     .accountsStrict({
