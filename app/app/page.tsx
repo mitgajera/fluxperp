@@ -179,7 +179,7 @@ function ArchArrow({ label }: { label: string }) {
       <svg width="100%" height="20" viewBox="0 0 120 20" fill="none" aria-hidden>
         <path d="M2 10h108" stroke="#2ebd85" strokeWidth="1" strokeDasharray="3 3" opacity="0.6" />
         <path d="M104 5l8 5-8 5" stroke="#2ebd85" strokeWidth="1" />
-        <path d="M16 5l-8 5 8 5" stroke="#2ebd85" strokeWidth="1" opacity="0.7" />
+        <path d="M10 5l-8 5 8 5" stroke="#2ebd85" strokeWidth="1" opacity="0.7" />
       </svg>
       <span className="text-[9px] text-faint mt-1">atomic bridge</span>
     </div>

@@ -43,10 +43,10 @@ export default function LandingStats() {
 
   return (
     <div className="inline-flex items-stretch divide-x divide-line rounded-xl border border-line bg-surface-1/70 backdrop-blur">
-      <Stat label="SOL-PERP Mark" value={price ? px(price.markPrice, 2) : "—"} accent />
+      {/* <Stat label="SOL-PERP Mark" value={price ? px(price.markPrice, 2) : "—"} accent />
       <Stat label="ER Latency" value={latency != null ? `${latency}ms` : "—"} />
       <Stat label="Insurance Fund" value={insurance != null ? usd(insurance) : "—"} />
-      <Stat label="Settlement" value="Solana L1" />
+      <Stat label="Settlement" value="Solana L1" /> */}
     </div>
   );
 }
