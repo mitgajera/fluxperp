@@ -51,7 +51,18 @@ function wallet(kp: Keypair): anchor.Wallet {
   return { publicKey: kp.publicKey, payer: kp, signTransaction: async (t: any) => { t.partialSign(kp); return t; }, signAllTransactions: async (ts: any[]) => { ts.forEach((t) => t.partialSign(kp)); return ts; } } as any;
 }
 
-function loadKp(name: string): Keypair {
+// Persistent keypair: prefer an env secret (so a host with an ephemeral filesystem — Render,
+// Fly — reuses the SAME maker/taker across restarts and never orphans its own resting orders),
+// else a local file, else generate one.
+function loadKp(name: string, envVar?: string): Keypair {
+  const env = envVar ? process.env[envVar] : undefined;
+  if (env) {
+    try {
+      return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(env)));
+    } catch {
+      console.error(`[market-maker] ${envVar} is set but not a valid keypair array — falling back`);
+    }
+  }
   const path = join(__dirname, name);
   if (existsSync(path)) return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(path, "utf8"))));
   const kp = Keypair.generate();
@@ -66,8 +77,8 @@ const TAKER_CAPITAL = Number(process.env.MM_TAKER_CAPITAL || 500_000);
 
 const l1 = new Connection(L1_RPC, "confirmed");
 const erConn = new Connection(ER_RPC, { wsEndpoint: ER_WS, commitment: "confirmed" });
-const maker = loadKp(".maker.json");
-const taker = loadKp(".taker.json");
+const maker = loadKp(".maker.json", "MAKER_SECRET");
+const taker = loadKp(".taker.json", "TAKER_SECRET");
 const l1p = new Program<Fluxperp>(idl as Fluxperp, new anchor.AnchorProvider(l1, wallet(maker), { commitment: "confirmed" }));
 const erp = new Program<Fluxperp>(idl as Fluxperp, new anchor.AnchorProvider(erConn, wallet(maker), { commitment: "confirmed" }));
 const l1pT = new Program<Fluxperp>(idl as Fluxperp, new anchor.AnchorProvider(l1, wallet(taker), { commitment: "confirmed" }));
