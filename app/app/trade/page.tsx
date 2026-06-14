@@ -5,12 +5,12 @@ import StatsBar from "../../components/StatsBar";
 import Orderbook from "../../components/Orderbook";
 import Chart from "../../components/Chart";
 import OrderForm from "../../components/OrderForm";
-import PositionPanel from "../../components/PositionPanel";
+import AccountPanel from "../../components/AccountPanel";
 import TradeHistory from "../../components/TradeHistory";
+import PriceTicker from "../../components/PriceTicker";
 import SessionKeyButton from "../../components/SessionKeyButton";
 import FillToast from "../../components/FillToast";
 import ProofOfSpeed from "../../components/ProofOfSpeed";
-import ShareCardHost from "../../components/ShareCardHost";
 
 export default function TradePage() {
   return (
@@ -39,28 +39,38 @@ export default function TradePage() {
 
         {}
         <div className="flex-1 min-h-0 flex gap-2 p-2 overflow-x-auto">
-          <div className="w-[280px] shrink-0">
-            <Orderbook />
+          {}
+          <div className="w-[300px] shrink-0 flex flex-col gap-2 min-h-0">
+            <div className="flex-[7] min-h-0">
+              <Orderbook />
+            </div>
+            <div className="flex-[4] min-h-0">
+              <TradeHistory />
+            </div>
           </div>
-          <div className="flex-1 min-w-[380px]">
-            <Chart />
+
+          {}
+          <div className="flex-1 min-w-[420px] min-h-0 flex flex-col gap-2">
+            <div className="flex-1 min-h-0">
+              <Chart />
+            </div>
+            <div className="h-[208px] shrink-0">
+              <AccountPanel />
+            </div>
           </div>
-          <div className="w-[296px] shrink-0 flex flex-col gap-2 overflow-y-auto">
-            <OrderForm />
+
+          {}
+          <div className="w-[320px] shrink-0 flex flex-col gap-2 min-h-0">
+            <div className="flex-1 min-h-0">
+              <OrderForm />
+            </div>
             <ProofOfSpeed />
           </div>
-          <div className="w-[340px] shrink-0">
-            <PositionPanel />
-          </div>
         </div>
 
-        {}
-        <div className="h-44 shrink-0 px-2 pb-2">
-          <TradeHistory />
-        </div>
+        <PriceTicker />
 
         <FillToast />
-        <ShareCardHost />
       </div>
     </Providers>
   );
