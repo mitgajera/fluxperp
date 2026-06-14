@@ -113,3 +113,26 @@ export async function erPing(conn: Connection): Promise<number> {
   await conn.getLatestBlockhash("confirmed");
   return Math.round(performance.now() - t0);
 }
+
+// Polling fallback: fetches orderbook / fill log / price feed in one RPC call. Used alongside
+// the websocket subscriptions so the feed stays live even when the socket is throttled (a
+// backgrounded tab) or silently drops — without it, the chart/book/trades freeze until reload.
+export async function pollFeeds(
+  conn: Connection,
+  market: number,
+  cbs: {
+    orderbook?: (o: OrderbookState) => void;
+    fillLog?: (f: FillLog) => void;
+    price?: (p: PriceFeed) => void;
+  }
+): Promise<void> {
+  try {
+    const keys = [orderbookPda(market), fillLogPda(market), priceFeedPda(market)];
+    const infos = await conn.getMultipleAccountsInfo(keys, "confirmed");
+    if (infos[0] && cbs.orderbook) cbs.orderbook(decodeOrderbook(infos[0].data as Buffer));
+    if (infos[1] && cbs.fillLog) cbs.fillLog(decodeFillLog(infos[1].data as Buffer));
+    if (infos[2] && cbs.price) cbs.price(decodePriceFeed(infos[2].data as Buffer));
+  } catch {
+    // transient RPC hiccup — the next tick will retry
+  }
+}

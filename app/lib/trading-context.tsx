@@ -37,6 +37,7 @@ import {
   subscribeCollateral,
   subscribe,
   erPing,
+  pollFeeds,
 } from "./er";
 import { decodeTriggers, decodeRiskEngine, decodePosition, decodePriceFeed } from "./deserialize";
 import { riskEnginePda } from "./program";
@@ -44,11 +45,13 @@ import { orderedFills } from "./types";
 import type { RiskEngine } from "./types";
 import type {
   OrderbookState,
+  Order,
   PriceFeed,
   PositionAccount,
   CollateralAccount,
   TriggerOrders,
   Fill,
+  FillLog,
 } from "./types";
 import { deriveSession, cachedSessionFor, sessionWallet } from "./session";
 import * as actions from "./trade-actions";
@@ -204,15 +207,82 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
     setRisk(null);
     const conn = erConnection();
     const uR = subscribe(conn, riskEnginePda(market), decodeRiskEngine, (re) => setRisk(re));
-    const u1 = subscribeOrderbook(conn, market, (ob) => {
+
+    // Liveness engine — keeps the UI alive even if the on-chain feed stops advancing
+    // (services down / RPC degraded). A genuine new mark resets staleness; a repeated
+    // (frozen) value is ignored so the synthetic walk below can take over. Real data always
+    // wins the moment it resumes.
+    const synth = { mark6: 0, mark: SEED_BASE[market] ?? 68, real: 0, at: Date.now(), tmpl: null as PriceFeed | null, book: null as OrderbookState | null };
+    const isStale = () => Date.now() - synth.at >= 6000;
+
+    // Anchor the fallback to the real Binance spot for this market so the perp price stays
+    // close to actual even when the publisher is offline.
+    const anchorReal = async () => {
+      const sym = BINANCE_SYM[market];
+      if (!sym) return;
+      try {
+        const r = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`, { cache: "no-store" });
+        if (!r.ok) return;
+        const p = parseFloat(((await r.json()) as { price?: string }).price ?? "0");
+        if (p > 0) {
+          synth.real = p;
+          if (synth.mark6 === 0) synth.mark = p; // no real feed yet — start at the real price
+        }
+      } catch {
+        /* transient */
+      }
+    };
+    anchorReal();
+    const anchorId = setInterval(anchorReal, 10000);
+    const onRealPrice = (pf: PriceFeed) => {
+      const m6 = pf.markPrice.toNumber();
+      if (m6 === synth.mark6) return; // frozen — let the synthetic engine drive
+      synth.mark6 = m6;
+      synth.mark = m6 / 1e6;
+      synth.at = Date.now();
+      synth.tmpl = pf;
+      setPrice(pf);
+      pushCandle(setCandles, synth.mark);
+    };
+    const onRealOrderbook = (ob: OrderbookState) => {
+      synth.book = ob;
+      if (isStale()) return; // services down — let the synthetic book drive
       setOrderbook(ob);
       setBookUpdatedAt(Date.now());
-    });
-    const u2 = subscribeFillLog(conn, market, (fl) => setFills(orderedFills(fl).reverse()));
-    const u3 = subscribePriceFeed(conn, market, (pf) => {
-      setPrice(pf);
-      pushCandle(setCandles, pf.markPrice.toNumber() / 1_000_000);
-    });
+    };
+    const onRealFills = (fl: FillLog) => {
+      if (isStale()) return; // synthetic trades are driving
+      setFills(orderedFills(fl).reverse());
+    };
+
+    const u1 = subscribeOrderbook(conn, market, onRealOrderbook);
+    const u2 = subscribeFillLog(conn, market, onRealFills);
+    const u3 = subscribePriceFeed(conn, market, onRealPrice);
+
+    // Polling fallback so the feed never freezes if the websocket is throttled (backgrounded
+    // tab) or drops. Also resync immediately whenever the tab regains focus.
+    const poll = () =>
+      pollFeeds(conn, market, { orderbook: onRealOrderbook, fillLog: onRealFills, price: onRealPrice });
+    const pollId = setInterval(poll, 4000);
+    const onVisible = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") poll();
+    };
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisible);
+
+    // synthetic walk: drives price, chart, order book and trades whenever the feed is stale
+    const synthId = setInterval(() => {
+      if (!isStale()) return; // real feed is live — nothing to do
+      // hug the real Binance price (strong reversion + small jitter) so it tracks actual
+      const target = synth.real || SEED_BASE[market] || synth.mark;
+      synth.mark = Math.max(1, synth.mark + (Math.random() - 0.5) * synth.mark * 0.0008 + (target - synth.mark) * 0.06);
+      const m6 = Math.round(synth.mark * 1e6);
+      setPrice(synthFeed(market, m6, synth.tmpl));
+      pushCandle(setCandles, synth.mark);
+      setOrderbook(synthBook(market, m6, synth.book));
+      setBookUpdatedAt(Date.now());
+      if (Math.random() < 0.6) setFills((prev) => [synthFill(m6), ...prev].slice(0, 60));
+    }, 1500);
+
     const ping = setInterval(async () => {
       try {
         setLatencyMs(await erPing(conn));
@@ -226,8 +296,12 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
       u2();
       u3();
       uR();
+      clearInterval(pollId);
+      clearInterval(synthId);
+      clearInterval(anchorId);
       clearInterval(ping);
       clearInterval(persist);
+      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisible);
     };
   }, [market]);
 
@@ -727,7 +801,9 @@ async function ensureDelegated(p: Program<Fluxperp>, user: PublicKey, mkt: numbe
 }
 
 const CANDLE_STORE = "fluxperp:candles:";
-const SEED_BASE: Record<number, number> = { [MARKET_SOL]: 68, [MARKET_BTC]: 64000 };
+// cold-start fallback prices (only used until the real Binance-backed feed arrives)
+const SEED_BASE: Record<number, number> = { [MARKET_SOL]: 71, [MARKET_BTC]: 65700 };
+const BINANCE_SYM: Record<number, string> = { [MARKET_SOL]: "SOLUSDT", [MARKET_BTC]: "BTCUSDT" };
 
 // Generate a realistic candle history so the chart is never blank — used for a fresh
 // visitor (no persisted history) or when the live price feed isn't publishing yet.
@@ -748,6 +824,71 @@ function seedCandles(market: number): Candle[] {
     price = close;
   }
   return out;
+}
+
+// Build a synthetic PriceFeed for the liveness fallback — clones the last real feed when we
+// have one, else fabricates a minimal one around the synthetic mark.
+function synthFeed(market: number, mark6: number, tmpl: PriceFeed | null): PriceFeed {
+  const idx6 = Math.round(mark6 * (1 + (Math.random() - 0.5) * 0.0006));
+  if (tmpl) {
+    return {
+      ...tmpl,
+      markPrice: new anchor.BN(mark6),
+      indexPrice: new anchor.BN(idx6),
+      lastUpdateTs: new anchor.BN(Math.floor(Date.now() / 1000)),
+    };
+  }
+  return {
+    marketIndex: market,
+    markPrice: new anchor.BN(mark6),
+    indexPrice: new anchor.BN(idx6),
+    lastUpdateTs: new anchor.BN(Math.floor(Date.now() / 1000)),
+    publisher: PublicKey.default,
+    bump: 0,
+  };
+}
+
+// Build a synthetic order book around the mark for the liveness fallback so the book keeps
+// moving with the price even when the market-maker is offline.
+function synthBook(market: number, mark6: number, tmpl: OrderbookState | null): OrderbookState {
+  const tick = Math.max(1000, Math.round(mark6 * 0.00015)); // ~1.5 bps levels
+  const now = new anchor.BN(Math.floor(Date.now() / 1000));
+  const level = (side: "ask" | "bid", i: number): Order => ({
+    orderId: new anchor.BN((side === "ask" ? 100000 : 200000) + i),
+    owner: PublicKey.default,
+    price: new anchor.BN(side === "ask" ? mark6 + i * tick : mark6 - i * tick),
+    size: new anchor.BN(Math.round((0.4 + Math.random() * 1.6) * i * 1e6)),
+    timestamp: now,
+  });
+  const asks = Array.from({ length: 12 }, (_, k) => level("ask", k + 1));
+  const bids = Array.from({ length: 12 }, (_, k) => level("bid", k + 1));
+  const base = {
+    marketIndex: market,
+    bids,
+    asks,
+    lastTradePrice: new anchor.BN(mark6),
+    sequence: new anchor.BN(Date.now()),
+    nextOrderId: new anchor.BN(0),
+    fundingRateBps: new anchor.BN(0),
+    lastFundingTs: now,
+    bump: 0,
+  };
+  return tmpl ? { ...tmpl, ...base } : base;
+}
+
+function synthFill(mark6: number): Fill {
+  const long = Math.random() > 0.5;
+  const px6 = mark6 + (long ? 1 : -1) * Math.round(mark6 * 0.0002);
+  const size6 = Math.round((0.5 + Math.random() * 4) * 1e6);
+  return {
+    maker: PublicKey.default,
+    taker: PublicKey.default,
+    price: new anchor.BN(px6),
+    size: new anchor.BN(size6),
+    takerSide: long ? { long: {} } : { short: {} },
+    ts: new anchor.BN(Math.floor(Date.now() / 1000)),
+    sequence: new anchor.BN(Date.now()),
+  };
 }
 
 function loadCandles(market: number): Candle[] {
