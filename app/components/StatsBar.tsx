@@ -84,7 +84,7 @@ export default function StatsBar() {
         />
         <div className="flex flex-col leading-tight">
           <span className="text-2xs uppercase tracking-wide text-faint">ER latency</span>
-          <span className="tnum font-mono text-sm text-long">{latencyMs != null ? `${latencyMs} ms` : "—"}</span>
+          <span className="tnum font-mono text-sm text-txt">{latencyMs != null ? `${latencyMs} ms` : "—"}</span>
         </div>
       </div>
     </div>

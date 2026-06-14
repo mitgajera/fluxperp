@@ -194,7 +194,7 @@ export default function OrderForm() {
       {!hasSession ? (
         <button
           onClick={startSession}
-          className="h-10 rounded-md bg-long/15 text-long border border-long/40 text-sm font-semibold hover:bg-long/25 transition-colors cursor-pointer shadow-glow-sm"
+          className="h-10 rounded-md bg-long text-black text-sm font-semibold hover:bg-long/90 transition-colors cursor-pointer shadow-glow-sm active:scale-[0.99]"
         >
           Start Trading Session
         </button>
@@ -202,9 +202,9 @@ export default function OrderForm() {
         <button
           onClick={submit}
           disabled={!canPlace || busy}
-          className={`h-10 rounded-md text-sm font-semibold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+          className={`h-10 rounded-md text-sm font-semibold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.99] ${
             side === "long"
-              ? "bg-long text-black hover:bg-long/90 shadow-glow"
+              ? "bg-long text-black hover:bg-long/90 shadow-glow-sm"
               : "bg-short text-white hover:bg-short/90"
           }`}
         >

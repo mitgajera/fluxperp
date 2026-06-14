@@ -22,7 +22,7 @@ export default function Sparkline({
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(" ");
-  const color = positive ? "#39ff14" : "#ff4d4d";
+  const color = positive ? "#2ebd85" : "#ff4d4d";
   return (
     <svg width={width} height={height} aria-hidden className="overflow-visible">
       <polyline points={pts} fill="none" stroke={color} strokeWidth={1} opacity={0.9} />

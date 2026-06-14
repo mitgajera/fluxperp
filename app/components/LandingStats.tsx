@@ -10,7 +10,7 @@ import type { PriceFeed } from "../lib/types";
 function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
   return (
     <div className="flex flex-col items-center px-6 py-4">
-      <span className={`tnum font-mono text-2xl ${accent ? "text-long drop-shadow-[0_0_10px_rgba(57,255,20,0.4)]" : "text-txt"}`}>
+      <span className={`tnum font-mono text-2xl ${accent ? "text-long drop-shadow-[0_0_10px_rgba(46,189,133,0.4)]" : "text-txt"}`}>
         {value}
       </span>
       <span className="text-2xs uppercase tracking-wider text-faint mt-1">{label}</span>

@@ -32,7 +32,7 @@ export default function ADLLight({
 }
 
 function Bars({ lit }: { lit: number }) {
-  const colors = ["#39ff14", "#9bff39", "#ffd23f", "#ff8c39", "#ff4d4d"];
+  const colors = ["#2ebd85", "#9bff39", "#ffd23f", "#ff8c39", "#ff4d4d"];
   return (
     <span className="inline-flex items-end gap-[2px] h-3" title={`ADL queue: ${lit}/5`} aria-label={`ADL risk ${lit} of 5`}>
       {[0, 1, 2, 3, 4].map((i) => (

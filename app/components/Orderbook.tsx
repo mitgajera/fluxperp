@@ -79,7 +79,7 @@ export default function Orderbook() {
 
       {}
       <div className="flex items-center justify-between px-3 h-8 border-y border-line bg-surface-2">
-        <span className="tnum font-mono text-sm text-txt drop-shadow-[0_0_6px_rgba(57,255,20,0.25)]">
+        <span className="tnum font-mono text-sm text-txt drop-shadow-[0_0_6px_rgba(46,189,133,0.25)]">
           {mark != null ? mark.toFixed(3) : "—"}
         </span>
         <span className="tnum font-mono text-2xs text-faint">
