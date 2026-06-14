@@ -9,8 +9,8 @@ export const ER_RPC = process.env.ER_RPC || "https://devnet-as.magicblock.app";
 export const ER_WS = process.env.ER_WS || "wss://devnet-as.magicblock.app";
 
 export const MARKETS = [
-  { index: 0, symbol: "SOL", product: "SOL-USD" },
-  { index: 1, symbol: "BTC", product: "BTC-USD" },
+  { index: 0, symbol: "SOL", product: "SOLUSDT" },
+  { index: 1, symbol: "BTC", product: "BTCUSDT" },
 ];
 
 const enc = new TextEncoder();
@@ -27,10 +27,11 @@ export function toFixed6(n: number): anchor.BN {
 }
 
 export async function fetchSpot(product: string): Promise<number> {
-  const res = await fetch(`https://api.coinbase.com/v2/prices/${product}/spot`);
+  // Binance spot as the perp oracle (e.g. SOLUSDT, BTCUSDT)
+  const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${product}`);
   if (!res.ok) throw new Error(`spot ${product} ${res.status}`);
   const j: any = await res.json();
-  return parseFloat(j.data.amount);
+  return parseFloat(j.price);
 }
 
 export function erProgram(wallet: anchor.Wallet): Program<Fluxperp> {
@@ -102,8 +103,8 @@ async function main() {
   // Demo liveliness: overlay an anchored, mean-reverting random walk on the real
   // spot so the chart and book actually MOVE, while staying tethered to reality.
   // SYNTH_VOL_BPS = per-tick step (0 disables → pure real spot). index = real spot.
-  const SIGMA = Number(process.env.SYNTH_VOL_BPS || 22) / 10_000;
-  const THETA = 0.02; // pull back toward real spot each tick
+  const SIGMA = Number(process.env.SYNTH_VOL_BPS || 8) / 10_000;
+  const THETA = 0.12; // strong pull back toward real spot so the perp tracks Binance closely
   const synth: Record<number, number> = {};
   const spot: Record<number, number> = {};
   const last: Record<number, number> = {};
@@ -120,7 +121,7 @@ async function main() {
     if (busy) return;
     busy = true;
     try {
-      const refreshSpot = spotAge++ % 8 === 0; // ~every 8 ticks
+      const refreshSpot = spotAge++ % 3 === 0; // refresh real spot ~every 3 ticks (~1.2s)
       for (const m of live) {
         if (refreshSpot) {
           try {

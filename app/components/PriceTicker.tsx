@@ -8,45 +8,67 @@ interface Asset {
   price: number;
   change24h: number; // percent
   dp: number;
+  binance: string;
+  cg: string; // CoinGecko fallback id (for symbols Binance doesn't list, e.g. HYPE)
 }
 
-// realistic seed prices; the ticker walks them so the bar is always live
-const SEED: { symbol: string; price: number; dp: number }[] = [
-  { symbol: "SOL", price: 68.4, dp: 3 },
-  { symbol: "BTC", price: 64210, dp: 1 },
-  { symbol: "ETH", price: 3384, dp: 2 },
-  { symbol: "HYPE", price: 38.6, dp: 3 },
-  { symbol: "BNB", price: 612.4, dp: 2 },
-  { symbol: "ZEC", price: 44.2, dp: 3 },
+const SEED: (Omit<Asset, "price" | "change24h"> & { seed: number })[] = [
+  { symbol: "SOL", dp: 3, binance: "SOLUSDT", cg: "solana", seed: 71 },
+  { symbol: "BTC", dp: 1, binance: "BTCUSDT", cg: "bitcoin", seed: 65700 },
+  { symbol: "ETH", dp: 2, binance: "ETHUSDT", cg: "ethereum", seed: 1718 },
+  { symbol: "HYPE", dp: 3, binance: "HYPEUSDT", cg: "hyperliquid", seed: 45 },
+  { symbol: "BNB", dp: 2, binance: "BNBUSDT", cg: "binancecoin", seed: 616 },
+  { symbol: "ZEC", dp: 3, binance: "ZECUSDT", cg: "zcash", seed: 487 },
 ];
-
-function gauss() {
-  let u = 0,
-    v = 0;
-  while (u === 0) u = Math.random();
-  while (v === 0) v = Math.random();
-  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
-}
 
 export default function PriceTicker() {
   const [assets, setAssets] = useState<Asset[]>(() =>
-    SEED.map((s) => ({ ...s, change24h: gauss() * 3 }))
+    SEED.map(({ seed, ...s }) => ({ ...s, price: seed, change24h: 0 }))
   );
   const ref = useRef(assets);
   ref.current = assets;
-
   useEffect(() => {
-    const t = setInterval(() => {
-      setAssets(
-        ref.current.map((a) => {
-          // small mean-reverting random walk
-          const drift = gauss() * 0.0007;
-          const price = Math.max(0.0001, a.price * (1 + drift));
-          return { ...a, price, change24h: a.change24h + drift * 100 * 0.4 };
+    const tick = async () => {
+      // Binance 24h ticker per symbol (independent so one missing pair can't break the rest)
+      const bn = await Promise.all(
+        SEED.map(async (s) => {
+          try {
+            const r = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${s.binance}`, { cache: "no-store" });
+            if (!r.ok) return null;
+            const j = (await r.json()) as { lastPrice?: string; priceChangePercent?: string };
+            return { price: parseFloat(j.lastPrice ?? "0"), change: parseFloat(j.priceChangePercent ?? "0") };
+          } catch {
+            return null;
+          }
         })
       );
-    }, 1400);
-    return () => clearInterval(t);
+      // CoinGecko fallback for whatever Binance didn't return (HYPE)
+      const missing = SEED.filter((_, i) => !bn[i] || bn[i]!.price <= 0);
+      let cg: Record<string, { usd?: number; usd_24h_change?: number }> = {};
+      if (missing.length) {
+        try {
+          const ids = missing.map((s) => s.cg).join(",");
+          const r = await fetch(
+            `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(ids)}&vs_currencies=usd&include_24hr_change=true`,
+            { cache: "no-store" }
+          );
+          if (r.ok) cg = await r.json();
+        } catch {
+          /* keep last */
+        }
+      }
+      setAssets((prev) =>
+        prev.map((a, i) => {
+          if (bn[i] && bn[i]!.price > 0) return { ...a, price: bn[i]!.price, change24h: bn[i]!.change };
+          const c = cg[SEED[i].cg];
+          if (c?.usd && c.usd > 0) return { ...a, price: c.usd, change24h: c.usd_24h_change ?? a.change24h };
+          return a; // keep last/seed
+        })
+      );
+    };
+    tick();
+    const id = setInterval(tick, 15000);
+    return () => clearInterval(id);
   }, []);
 
   const row = (key: string) => (
