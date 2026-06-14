@@ -21,6 +21,8 @@ import {
 } from "@solana/web3.js";
 import {
   createAssociatedTokenAccountIdempotentInstruction,
+  createTransferInstruction,
+  getAccount,
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import type { Fluxperp } from "./idl/fluxperp";
@@ -118,6 +120,7 @@ interface Ctx {
 
   deposit: (amountUsdc: number) => Promise<void>;
   withdraw: (amountUsdc: number) => Promise<void>;
+  claimFaucet: () => Promise<void>;
   txStatus: string;
 
   lastClose: ClosedTrade | null;
@@ -534,17 +537,28 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
       const l1 = l1Connection();
       try {
         const mint = await getMint();
+        const walletAta = getAssociatedTokenAddressSync(mint, wallet.publicKey);
+        const sessionAta = getAssociatedTokenAddressSync(mint, kp.publicKey);
 
-        setTxStatus("Requesting test USDC from the faucet…");
-        const res = await fetch("/api/faucet", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ owner: kp.publicKey.toBase58(), amount: amountUsdc }),
-        });
-        if (!res.ok) {
-          const j = (await res.json().catch(() => ({}))) as { error?: string };
-          throw new Error(j.error || "faucet request failed");
+        // the wallet must hold the USDC (claimed from the faucet); move it to the session
+        let walletBal = 0;
+        try {
+          walletBal = Number((await getAccount(l1, walletAta)).amount) / 1e6;
+        } catch {
+          /* no token account yet */
         }
+        if (walletBal < amountUsdc) {
+          throw new Error(`Need ${amountUsdc} USDC in your wallet — claim from the faucet first`);
+        }
+        setTxStatus("Funding session (approve in wallet)…");
+        const fundTx = new Transaction().add(
+          createAssociatedTokenAccountIdempotentInstruction(wallet.publicKey, sessionAta, kp.publicKey, mint),
+          createTransferInstruction(walletAta, sessionAta, wallet.publicKey, Math.round(amountUsdc * 1e6))
+        );
+        fundTx.feePayer = wallet.publicKey;
+        fundTx.recentBlockhash = (await l1.getLatestBlockhash("confirmed")).blockhash;
+        const signed = await wallet.signTransaction(fundTx);
+        await l1.confirmTransaction(await l1.sendRawTransaction(signed.serialize()), "confirmed");
 
         // if the collateral is already delegated (re-deposit), bring it back to L1 first —
         // the deposit writes on L1, so the account must be owned by our program.
@@ -575,6 +589,29 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
     },
     [wallet, getMint, startSession, toast, market]
   );
+
+  // claim test USDC to the connected wallet (rate-limited to 1000 / 2h server-side)
+  const claimFaucet = useCallback(async () => {
+    if (!wallet.publicKey) {
+      toast({ kind: "error", text: "Connect a wallet first" });
+      return;
+    }
+    try {
+      setTxStatus("Claiming test USDC…");
+      const res = await fetch("/api/faucet", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ owner: wallet.publicKey.toBase58() }),
+      });
+      const j = (await res.json().catch(() => ({}))) as { amount?: number; error?: string };
+      if (!res.ok) throw new Error(j.error || "faucet request failed");
+      setTxStatus("");
+      toast({ kind: "info", text: `Claimed ${j.amount ?? 1000} USDC to your wallet` });
+    } catch (e) {
+      setTxStatus("");
+      toast({ kind: "error", text: cleanErr(e) });
+    }
+  }, [wallet, toast]);
 
   const withdraw = useCallback(
     async (amountUsdc: number) => {
@@ -648,6 +685,7 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
       submitAdvanced,
       deposit,
       withdraw,
+      claimFaucet,
       txStatus,
       lastClose,
       clearLastClose,
@@ -658,7 +696,7 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
       market, symbol, risk, orderbook, fills, price, candles, latencyMs, bookUpdatedAt, wallet.publicKey,
       sessionPubkey, sessionStatus, position, collateral, triggers, portfolioMargin, toasts, txStatus, lastClose,
       startSession, endSession, submitOrder, cancel, closeAll, reverse, scale, addTrigger, removeTrigger,
-      submitAdvanced, deposit, withdraw, clearLastClose, dismissToast,
+      submitAdvanced, deposit, withdraw, claimFaucet, clearLastClose, dismissToast,
     ]
   );
 
@@ -733,8 +771,12 @@ function subscribeTriggers(
 
 function cleanErr(e: unknown): string {
   const m = (e as Error)?.message || String(e);
-  if (m.includes("NoLiquidity")) return "No liquidity to fill";
+  if (m.includes("NoLiquidity")) return "No liquidity to fill — try a smaller size";
   if (m.includes("InsufficientMargin")) return "Insufficient margin";
+  if (/PriceOutOfBounds|TooFarFromOracle|StalePrice|0x177[0-9a-f]/i.test(m)) return "Price feed stale — wait a moment and retry";
   if (m.includes("session")) return m;
-  return m.slice(0, 80);
+  // rollup wraps program errors as a verification error; the real cause is logged to the console
+  if (/verification error|Error processing Instruction|custom program error/i.test(m))
+    return "Order rejected by the rollup — see console for details";
+  return m.slice(0, 90);
 }

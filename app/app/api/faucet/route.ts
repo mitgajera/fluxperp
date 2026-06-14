@@ -11,7 +11,20 @@ import { vaultPda } from "../../../lib/program";
 export const runtime = "nodejs";
 
 const L1_RPC = process.env.NEXT_PUBLIC_SOLANA_L1_RPC || "https://api.devnet.solana.com";
-const MAX_FAUCET_USDC = 50_000;
+const CLAIM_USDC = 1000; // fixed amount per claim
+const COOLDOWN_MS = 2 * 60 * 60 * 1000; // one claim per wallet per 2 hours
+
+// in-memory cooldown (per dev-server process — fine for devnet)
+const lastClaim = new Map<string, number>();
+
+export async function GET(req: NextRequest) {
+  // lets the UI show remaining cooldown without minting
+  const owner = req.nextUrl.searchParams.get("owner");
+  if (!owner) return NextResponse.json({ amount: CLAIM_USDC, cooldownMs: COOLDOWN_MS });
+  const last = lastClaim.get(owner) ?? 0;
+  const remaining = Math.max(0, COOLDOWN_MS - (Date.now() - last));
+  return NextResponse.json({ amount: CLAIM_USDC, cooldownMs: COOLDOWN_MS, remainingMs: remaining, ready: remaining === 0 });
+}
 
 export async function POST(req: NextRequest) {
   const secret = process.env.FAUCET_SECRET;
@@ -23,13 +36,22 @@ export async function POST(req: NextRequest) {
   }
 
   let owner: PublicKey;
-  let amountUsdc: number;
   try {
-    const body = await req.json();
-    owner = new PublicKey(body.owner);
-    amountUsdc = Math.min(Math.max(Number(body.amount) || 1000, 1), MAX_FAUCET_USDC);
+    owner = new PublicKey((await req.json()).owner);
   } catch {
-    return NextResponse.json({ error: "Invalid request: { owner, amount }" }, { status: 400 });
+    return NextResponse.json({ error: "Invalid request: { owner }" }, { status: 400 });
+  }
+
+  // rate limit: 1000 USDC per wallet per 2 hours
+  const key = owner.toBase58();
+  const last = lastClaim.get(key) ?? 0;
+  const remaining = COOLDOWN_MS - (Date.now() - last);
+  if (remaining > 0) {
+    const mins = Math.ceil(remaining / 60000);
+    return NextResponse.json(
+      { error: `Faucet cooldown — try again in ${mins} min`, remainingMs: remaining },
+      { status: 429 }
+    );
   }
 
   try {
@@ -40,11 +62,12 @@ export async function POST(req: NextRequest) {
 
     const tx = new Transaction().add(
       createAssociatedTokenAccountIdempotentInstruction(authority.publicKey, ata, owner, mint),
-      createMintToInstruction(mint, ata, authority.publicKey, BigInt(Math.round(amountUsdc * 1e6)))
+      createMintToInstruction(mint, ata, authority.publicKey, BigInt(Math.round(CLAIM_USDC * 1e6)))
     );
     const signature = await sendAndConfirmTransaction(conn, tx, [authority], { commitment: "confirmed" });
 
-    return NextResponse.json({ signature, mint: mint.toBase58(), amount: amountUsdc });
+    lastClaim.set(key, Date.now());
+    return NextResponse.json({ signature, mint: mint.toBase58(), amount: CLAIM_USDC, cooldownMs: COOLDOWN_MS });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }

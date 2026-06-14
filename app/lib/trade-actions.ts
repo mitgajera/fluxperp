@@ -88,26 +88,56 @@ async function sendAutoCommit(
   const conn = program.provider.connection;
   const kp = (program.provider as anchor.AnchorProvider).wallet as unknown as { payer: Keypair };
 
-  // The orderbook/maker accounts are hot (the market-maker quotes constantly), so a send
-  // can hit transient account-lock / blockhash contention. Retry a few times with a fresh
-  // blockhash before surfacing the error.
-  let lastErr: unknown;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const tx = new Transaction().add(tradeIx, commitIx);
+  const sendIxs = async (ixs: TransactionInstruction[]) => {
+    const tx = new Transaction().add(...ixs);
     tx.feePayer = trader;
     tx.recentBlockhash = (await conn.getLatestBlockhash("confirmed")).blockhash;
     tx.sign(kp.payer);
     const t0 = performance.now();
+    const signature = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: false });
+    await conn.confirmTransaction(signature, "confirmed");
+    return { signature, ms: Math.round(performance.now() - t0) };
+  };
+
+  // Preferred path: the trade and the L1 commit land atomically in one tx.
+  // The commit writes the shared insurance_fund, which the live market-maker/publisher
+  // also touch, so a commit can hit a 0xa0000000 commit-conflict. Retry a few times with a
+  // fresh blockhash; if it still won't land, fall back to placing the order WITHOUT the commit
+  // so the trade still executes on the rollup (state settles to L1 on close/undelegate).
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const signature = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: false });
-      await conn.confirmTransaction(signature, "confirmed");
-      return { signature, ms: Math.round(performance.now() - t0) };
+      return await sendIxs([tradeIx, commitIx]);
     } catch (e) {
       lastErr = e;
       const m = String((e as Error)?.message ?? e);
       const transient = /verification error|0xa0000000|Blockhash not found|block height exceeded|already been processed|not confirmed|fetch failed|429|Too Many/i.test(m);
-      if (!transient || attempt === 3) throw e;
-      await new Promise((r) => setTimeout(r, 350 + attempt * 250));
+      if (!transient) {
+        const logs = (e as { logs?: string[] })?.logs;
+        if (logs?.length) console.error("[fluxperp] tx failed — program logs:\n" + logs.join("\n"));
+        else console.error("[fluxperp] tx failed:", e);
+        throw e;
+      }
+      await new Promise((r) => setTimeout(r, 300 + attempt * 200));
+    }
+  }
+
+  // Fallback: order-only, so a flaky commit never blocks the actual trade.
+  console.warn("[fluxperp] commit kept colliding — placing order without atomic L1 commit");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await sendIxs([tradeIx]);
+    } catch (e) {
+      lastErr = e;
+      const m = String((e as Error)?.message ?? e);
+      const transient = /Blockhash not found|block height exceeded|already been processed|not confirmed|fetch failed|429|Too Many/i.test(m);
+      if (!transient || attempt === 2) {
+        const logs = (e as { logs?: string[] })?.logs;
+        if (logs?.length) console.error("[fluxperp] order-only tx failed — program logs:\n" + logs.join("\n"));
+        else console.error("[fluxperp] order-only tx failed:", e);
+        throw e;
+      }
+      await new Promise((r) => setTimeout(r, 300 + attempt * 200));
     }
   }
   throw lastErr;
