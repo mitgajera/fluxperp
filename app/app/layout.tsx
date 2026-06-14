@@ -14,7 +14,7 @@ const geistMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "FluxPerp — perp trading at ER speed",
+  title: "FluxPerp | perp trading at ER speed",
   description:
     "Fully onchain perpetuals DEX inside MagicBlock's Ephemeral Rollup. Sub-100ms fills, settled on Solana.",
 };
