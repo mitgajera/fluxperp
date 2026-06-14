@@ -4,10 +4,27 @@
 
 html,
 body {
-  background: #0a0a0a;
-  color: #ededed;
+  background: #0a0b0d;
+  color: #e8eaed;
   font-family: var(--font-geist-sans), system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* refined text selection */
+::selection {
+  background: rgba(46, 189, 133, 0.28);
+  color: #fff;
+}
+
+/* visible keyboard focus, invisible on mouse */
+:focus-visible {
+  outline: 2px solid rgba(46, 189, 133, 0.55);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+:focus:not(:focus-visible) {
+  outline: none;
 }
 
 /* numbers everywhere should be tabular so columns don't jitter on updates */
@@ -19,18 +36,18 @@ body {
 /* thin dark scrollbars for the dense panels */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #2a2a30 transparent;
+  scrollbar-color: #2b2f38 transparent;
 }
 *::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 *::-webkit-scrollbar-thumb {
-  background: #2a2a30;
+  background: #2b2f38;
   border-radius: 3px;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: #3a3a42;
+  background: #3a3f4a;
 }
 
 @layer utilities {
@@ -38,7 +55,7 @@ body {
     text-wrap: balance;
   }
   .panel {
-    @apply bg-surface-1 border border-line rounded-lg;
+    @apply bg-surface-1 border border-line rounded-lg shadow-panel-hi;
   }
   .grid-row {
     @apply grid items-center;
