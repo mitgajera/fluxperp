@@ -73,6 +73,10 @@ const config: Config = {
           "0%": { backgroundPosition: "-200% 0" },
           "100%": { backgroundPosition: "200% 0" },
         },
+        marquee: {
+          "0%": { transform: "translateX(0)" },
+          "100%": { transform: "translateX(-50%)" },
+        },
       },
       animation: {
         "flash-up": "flash-up 0.5s ease-out",
@@ -82,6 +86,7 @@ const config: Config = {
         "toast-bar": "toast-bar linear forwards",
         "pulse-dot": "pulse-dot 1.6s ease-in-out infinite",
         shimmer: "shimmer 2s linear infinite",
+        marquee: "marquee 40s linear infinite",
       },
     },
   },
