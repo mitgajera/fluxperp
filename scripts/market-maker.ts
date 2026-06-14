@@ -24,6 +24,7 @@ const LEVELS = Number(process.env.MM_LEVELS || 4);
 const SPREAD_BPS = Number(process.env.MM_SPREAD_BPS || 8);
 const SIZE = Number(process.env.MM_SIZE || 1);
 const INTERVAL = Number(process.env.MM_INTERVAL_MS || 2500);
+const CAPITAL = Number(process.env.MM_CAPITAL || 2_000_000); // USDC the maker mints/deposits
 const ER_RPC = process.env.ER_RPC || "https://devnet-as.magicblock.app";
 const ER_WS = process.env.ER_WS || "wss://devnet-as.magicblock.app";
 const L1_RPC = process.env.SOLANA_L1_RPC || "https://api.devnet.solana.com";
@@ -74,13 +75,14 @@ async function ensureSetup(mint: PublicKey) {
     await l1.confirmTransaction(await l1.sendTransaction(new Transaction().add(SystemProgram.transfer({ fromPubkey: main.publicKey, toPubkey: maker.publicKey, lamports: 0.2 * LAMPORTS_PER_SOL })), [main]), "confirmed");
   }
   const ata = getAssociatedTokenAddressSync(mint, maker.publicKey);
+  const cap = BigInt(Math.round(CAPITAL * 1e6));
   if (!(await l1.getAccountInfo(ata))) {
     await l1.confirmTransaction(await l1.sendTransaction(new Transaction().add(createAssociatedTokenAccountIdempotentInstruction(main.publicKey, ata, maker.publicKey, mint)), [main]), "confirmed");
-    await mintTo(l1, main, mint, ata, main, 100_000_000_000);
+    await mintTo(l1, main, mint, ata, main, cap);
   }
   if (!(await l1.getAccountInfo(collOf(maker.publicKey)))) {
     await l1p.methods.initializeCollateral().accountsStrict({ user: maker.publicKey, collateral: collOf(maker.publicKey), systemProgram: SystemProgram.programId }).rpc();
-    await l1p.methods.depositCollateral(new anchor.BN(100_000_000_000)).accountsStrict({ user: maker.publicKey, collateral: collOf(maker.publicKey), userTokenAccount: ata, vault, tokenProgram: TOKEN }).rpc();
+    await l1p.methods.depositCollateral(new anchor.BN(cap.toString())).accountsStrict({ user: maker.publicKey, collateral: collOf(maker.publicKey), userTokenAccount: ata, vault, tokenProgram: TOKEN }).rpc();
   }
   if (!(await l1.getAccountInfo(posOf(maker.publicKey)))) await l1p.methods.initializePosition(MARKET).accountsStrict({ user: maker.publicKey, marketConfig, position: posOf(maker.publicKey), systemProgram: SystemProgram.programId }).rpc();
   if (!(await l1.getAccountInfo(trigOf(maker.publicKey)))) await l1p.methods.initializeTriggers(MARKET).accountsStrict({ user: maker.publicKey, marketConfig, triggers: trigOf(maker.publicKey), systemProgram: SystemProgram.programId }).rpc();
@@ -91,47 +93,109 @@ async function ensureSetup(mint: PublicKey) {
 const f6 = (n: number) => new anchor.BN(Math.round(n * 1e6));
 const align = (n: number) => Math.round((n * 1e6) / TICK) * TICK;  // tick-aligned (1e6 units)
 
-async function placeLimit(side: "long" | "short", price1e6: number) {
-  await erp.methods
-    .placeOrder(MARKET, side === "long" ? { long: {} } : { short: {} }, new anchor.BN(price1e6), f6(SIZE), { limit: {} })
+type Acct = { pubkey: PublicKey; isWritable: boolean; isSigner: boolean };
+
+const placeLimitIx = (side: "long" | "short", price1e6: number, size: number, cross: Acct[] = []) =>
+  erp.methods
+    .placeOrder(MARKET, side === "long" ? { long: {} } : { short: {} }, new anchor.BN(price1e6), f6(size), { limit: {} })
     .accountsStrict({ taker: maker.publicKey, marketConfig, orderbook, fillLog, takerPosition: posOf(maker.publicKey), takerCollateral: collOf(maker.publicKey), riskEngine: null, marginProfile: null })
-    .rpc();
+    .remainingAccounts(cross)
+    .instruction();
+
+const ownerAccts = (owners: string[]): Acct[] =>
+  owners.flatMap((o) => {
+    const k = new PublicKey(o);
+    return [
+      { pubkey: posOf(k), isWritable: true, isSigner: false },
+      { pubkey: collOf(k), isWritable: true, isSigner: false },
+    ];
+  });
+
+const cancelIx = (id: anchor.BN) =>
+  erp.methods.cancelOrder(MARKET, id).accountsStrict({ owner: maker.publicKey, orderbook }).instruction();
+
+// All the maker's order ixs share the same ~8 accounts, so many fit in one tx.
+// Submit (don't await confirmation) and pipeline — the book lands in ~hundreds of ms,
+// not the ~5s a per-order confirmed loop took.
+async function pipeline(ixs: anchor.web3.TransactionInstruction[], perTx: number) {
+  let blockhash = (await erConn.getLatestBlockhash("confirmed")).blockhash;
+  const sends: Promise<unknown>[] = [];
+  for (let i = 0; i < ixs.length; i += perTx) {
+    const tx = new Transaction().add(...ixs.slice(i, i + perTx));
+    tx.feePayer = maker.publicKey;
+    tx.recentBlockhash = blockhash;
+    tx.sign(maker);
+    sends.push(erConn.sendRawTransaction(tx.serialize(), { skipPreflight: true, maxRetries: 2 }).catch(() => {}));
+  }
+  await Promise.all(sends);
 }
 
-async function cancelMine() {
-  const ob: any = await erp.account.orderbookState.fetch(orderbook);
-  const mine = [...ob.bids, ...ob.asks].filter((o: any) => o.owner.equals(maker.publicKey));
-  for (const o of mine) {
-    try {
-      await erp.methods.cancelOrder(MARKET, o.orderId).accountsStrict({ owner: maker.publicKey, orderbook }).rpc();
-    } catch {}
-  }
-}
+let lastQuoteMark = 0;
 
 async function quote() {
   const pf: any = await erp.account.priceFeed.fetch(priceFeed);
-  let mark = pf.markPrice.toNumber();
-  if (mark === 0) mark = 187_350_000;
+  const mark = pf.markPrice.toNumber();
+  if (mark === 0) return; // never quote off a bad price (would print junk levels)
 
-  mark = Math.round(mark * (1 + (Math.random() - 0.5) * 0.0006));
+  const ob: any = await erp.account.orderbookState.fetch(orderbook);
+  const meB58 = maker.publicKey.toBase58();
+  const mine = [...ob.bids, ...ob.asks].filter((o: any) => o.owner.toBase58() === meB58);
+  // resting orders owned by OTHERS (users). When our quote crosses one, we must pass
+  // its owner's accounts or the cross fails silently — which is why limit orders never
+  // executed when the price reached them.
+  const otherBids = ob.bids.filter((o: any) => o.owner.toBase58() !== meB58);
+  const otherAsks = ob.asks.filter((o: any) => o.owner.toBase58() !== meB58);
+  const hasOthers = otherBids.length > 0 || otherAsks.length > 0;
 
-  await cancelMine();
+  // re-quote whenever the price moved ~a quarter level — keeps the book lively/fast.
+  // also always re-quote when a user order rests, so a crossing fill goes through promptly.
+  const moved = Math.abs(mark - lastQuoteMark) > (mark * SPREAD_BPS) / 40000;
+  if (mine.length >= LEVELS * 2 && !moved && !hasOthers) return;
+  lastQuoteMark = mark;
+
+  const oldIds = mine.map((o: any) => o.orderId as anchor.BN);
+
+  // build the fresh ladder (depth pyramid). An order that crosses a user's resting order
+  // carries that owner's accounts so the matching engine can fill it.
+  const placeIxs: anchor.web3.TransactionInstruction[] = [];
   for (let i = 1; i <= LEVELS; i++) {
     const off = (mark * SPREAD_BPS * i) / 10000;
-    const bid = align((mark - off) / 1e6);
-    const ask = align((mark + off) / 1e6);
-    try { await placeLimit("long", bid); } catch (e) {  }
-    try { await placeLimit("short", ask); } catch (e) {}
+    const size = SIZE * i;
+    const bidPx = align((mark - off) / 1e6);
+    const askPx = align((mark + off) / 1e6);
+    const bidCross = ownerAccts([...new Set(otherAsks.filter((o: any) => o.price.toNumber() <= bidPx).map((o: any) => o.owner.toBase58()))] as string[]);
+    const askCross = ownerAccts([...new Set(otherBids.filter((o: any) => o.price.toNumber() >= askPx).map((o: any) => o.owner.toBase58()))] as string[]);
+    placeIxs.push(await placeLimitIx("long", bidPx, size, bidCross));
+    placeIxs.push(await placeLimitIx("short", askPx, size, askCross));
   }
-  console.log(`  quoted ${LEVELS}×2 around ${(mark / 1e6).toFixed(3)}`);
+  // crossing orders need preflight off but reliable landing; small ladder so 6/tx is fine
+  await pipeline(placeIxs, 6);
+  if (oldIds.length) {
+    const cancelIxs = await Promise.all(oldIds.map((id: anchor.BN) => cancelIx(id)));
+    await pipeline(cancelIxs, 12);
+  }
 }
 
+const retry = async <T>(fn: () => Promise<T>, label: string): Promise<T> => {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      console.error(`${label} failed (attempt ${i + 1}): ${(e as Error).message.slice(0, 80)} — retrying`);
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+};
+
+// never let a transient RPC error kill the maker
+process.on("unhandledRejection", (e) => console.error("unhandledRejection:", String(e).slice(0, 100)));
+
 (async () => {
-  const mint = (await getAccount(l1, vault)).mint;
-  console.log(`market-maker: maker=${maker.publicKey.toBase58().slice(0, 8)} mint=${mint.toBase58().slice(0, 8)}`);
+  const mint = await retry(async () => (await getAccount(l1, vault)).mint, "vault read");
+  console.log(`market-maker: maker=${maker.publicKey.toBase58().slice(0, 8)} mint=${mint.toBase58().slice(0, 8)} capital=${CAPITAL} USDC`);
   console.log("ensuring maker setup (fund/deposit/delegate)…");
-  await ensureSetup(mint);
-  console.log(`quoting every ${INTERVAL}ms · ${LEVELS} levels · ${SPREAD_BPS}bps step`);
+  await retry(() => ensureSetup(mint), "ensureSetup");
+  console.log(`quoting every ${INTERVAL}ms · ${LEVELS} levels · ${SPREAD_BPS}bps step · base size ${SIZE}`);
   let busy = false;
   setInterval(async () => {
     if (busy) return;

@@ -43,16 +43,35 @@ export async function sendPushPrice(
   program: Program<Fluxperp>,
   marketIndex: number,
   mark: anchor.BN,
-  index: anchor.BN
+  index: anchor.BN,
+  confirm = true
 ): Promise<string> {
-  return program.methods
+  if (confirm) {
+    return program.methods
+      .pushPrice(marketIndex, mark, index)
+      .accountsStrict({
+        publisher: program.provider.publicKey!,
+        priceFeed: priceFeedPda(program.programId, marketIndex),
+      })
+      .rpc();
+  }
+  // fire-and-forget: submit without waiting up to 30s for confirmation (degraded-RPC safe)
+  const ix = await program.methods
     .pushPrice(marketIndex, mark, index)
     .accountsStrict({
       publisher: program.provider.publicKey!,
       priceFeed: priceFeedPda(program.programId, marketIndex),
     })
-    .rpc();
+    .instruction();
+  const conn = program.provider.connection;
+  const tx = new anchor.web3.Transaction().add(ix);
+  tx.feePayer = program.provider.publicKey!;
+  tx.recentBlockhash = (await conn.getLatestBlockhash("confirmed")).blockhash;
+  const signed = await (program.provider as anchor.AnchorProvider).wallet.signTransaction(tx);
+  return conn.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 2 });
 }
+
+process.on("unhandledRejection", (e) => console.error("unhandledRejection:", String(e).slice(0, 120)));
 
 async function main() {
   const walletPath = process.env.ANCHOR_WALLET;
@@ -67,35 +86,64 @@ async function main() {
   const live: typeof markets = [];
   for (const m of markets) {
     const pf = priceFeedPda(program.programId, m.index);
-    const info = await program.provider.connection.getAccountInfo(pf);
-    if (info) live.push(m);
-    else console.log(`  market ${m.index} (${m.symbol}) PriceFeed not on ER — skipping`);
+    try {
+      const info = await program.provider.connection.getAccountInfo(pf);
+      if (info) live.push(m);
+      else console.log(`  market ${m.index} (${m.symbol}) PriceFeed not on ER — skipping`);
+    } catch {
+      live.push(m); // RPC blip — assume the market exists and let the loop retry
+    }
   }
 
   console.log(
     `price-publisher: ER=${ER_RPC} markets=[${live.map((m) => m.symbol).join(",")}] every ${intervalMs}ms`
   );
 
+  // Demo liveliness: overlay an anchored, mean-reverting random walk on the real
+  // spot so the chart and book actually MOVE, while staying tethered to reality.
+  // SYNTH_VOL_BPS = per-tick step (0 disables → pure real spot). index = real spot.
+  const SIGMA = Number(process.env.SYNTH_VOL_BPS || 22) / 10_000;
+  const THETA = 0.02; // pull back toward real spot each tick
+  const synth: Record<number, number> = {};
+  const spot: Record<number, number> = {};
   const last: Record<number, number> = {};
+  let spotAge = 0;
+  const gauss = () => {
+    const u = 1 - Math.random();
+    const v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  };
+
   let busy = false;
+  // refresh the real spot anchor only occasionally (the API is slow); walk in between.
   setInterval(async () => {
     if (busy) return;
-
     busy = true;
     try {
+      const refreshSpot = spotAge++ % 8 === 0; // ~every 8 ticks
       for (const m of live) {
-        let px: number | undefined;
-        try {
-          px = await fetchSpot(m.product);
-          last[m.index] = px;
-        } catch {
-          px = last[m.index];
+        if (refreshSpot) {
+          try {
+            spot[m.index] = await fetchSpot(m.product);
+            last[m.index] = spot[m.index];
+          } catch {
+            /* keep last anchor */
+          }
         }
-        if (!px) continue;
+        const anchor = spot[m.index] ?? last[m.index];
+        if (!anchor) continue;
+
+        let s = synth[m.index] ?? anchor;
+        if (SIGMA > 0) {
+          s = s + s * SIGMA * gauss() + (anchor - s) * THETA; // random walk + reversion
+        } else {
+          s = anchor;
+        }
+        synth[m.index] = s;
+
         try {
-          const fx = toFixed6(px);
-          const sig = await sendPushPrice(program, m.index, fx, fx);
-          console.log(`  ${m.symbol} ${px.toFixed(2)} -> ${sig.slice(0, 8)}…`);
+          const sig = await sendPushPrice(program, m.index, toFixed6(s), toFixed6(anchor), false);
+          console.log(`  ${m.symbol} ${s.toFixed(m.index === 1 ? 1 : 3)} (spot ${anchor.toFixed(2)}) -> ${sig.slice(0, 8)}…`);
         } catch (e) {
           console.error(`  ${m.symbol} push failed: ${(e as Error).message}`);
         }
