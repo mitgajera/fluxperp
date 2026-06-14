@@ -18,7 +18,6 @@ import {
   marketConfigPda,
   orderbookPda,
   positionPda,
-  priceFeedPda,
   triggersPda,
   vaultPda,
 } from "./program";
@@ -81,25 +80,37 @@ async function sendAutoCommit(
     .commitState(market, new anchor.BN(insuranceDelta), new anchor.BN(protocolDelta))
     .accountsPartial({
       payer: trader,
-      orderbook: orderbookPda(market),
-      fillLog: fillLogPda(market),
-      priceFeed: priceFeedPda(market),
       insuranceFund: insurancePda(),
     })
     .remainingAccounts(touched)
     .instruction();
 
   const conn = program.provider.connection;
-  const tx = new Transaction().add(tradeIx, commitIx);
-  tx.feePayer = trader;
-  tx.recentBlockhash = (await conn.getLatestBlockhash("confirmed")).blockhash;
   const kp = (program.provider as anchor.AnchorProvider).wallet as unknown as { payer: Keypair };
-  tx.sign(kp.payer);
 
-  const t0 = performance.now();
-  const signature = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: false });
-  await conn.confirmTransaction(signature, "confirmed");
-  return { signature, ms: Math.round(performance.now() - t0) };
+  // The orderbook/maker accounts are hot (the market-maker quotes constantly), so a send
+  // can hit transient account-lock / blockhash contention. Retry a few times with a fresh
+  // blockhash before surfacing the error.
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const tx = new Transaction().add(tradeIx, commitIx);
+    tx.feePayer = trader;
+    tx.recentBlockhash = (await conn.getLatestBlockhash("confirmed")).blockhash;
+    tx.sign(kp.payer);
+    const t0 = performance.now();
+    try {
+      const signature = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: false });
+      await conn.confirmTransaction(signature, "confirmed");
+      return { signature, ms: Math.round(performance.now() - t0) };
+    } catch (e) {
+      lastErr = e;
+      const m = String((e as Error)?.message ?? e);
+      const transient = /verification error|0xa0000000|Blockhash not found|block height exceeded|already been processed|not confirmed|fetch failed|429|Too Many/i.test(m);
+      if (!transient || attempt === 3) throw e;
+      await new Promise((r) => setTimeout(r, 350 + attempt * 250));
+    }
+  }
+  throw lastErr;
 }
 
 export async function placeOrder(
@@ -134,7 +145,6 @@ export async function placeOrder(
   const touched: AccountMeta[] = [
     { pubkey: positionPda(trader, p.market), isWritable: true, isSigner: false },
     { pubkey: collateralPda(trader), isWritable: true, isSigner: false },
-    ...makerMetas,
   ];
   return sendAutoCommit(
     program,
@@ -177,7 +187,6 @@ export async function closePosition(
   const touched: AccountMeta[] = [
     { pubkey: positionPda(trader, market), isWritable: true, isSigner: false },
     { pubkey: collateralPda(trader), isWritable: true, isSigner: false },
-    ...makerMetas,
   ];
   return sendAutoCommit(
     program,
@@ -225,7 +234,6 @@ export async function reversePosition(
   const touched: AccountMeta[] = [
     { pubkey: positionPda(trader, market), isWritable: true, isSigner: false },
     { pubkey: collateralPda(trader), isWritable: true, isSigner: false },
-    ...makerMetas,
   ];
 
   const n2 = notional * 2;
@@ -259,7 +267,6 @@ export async function scalePosition(
   const touched: AccountMeta[] = [
     { pubkey: positionPda(trader, market), isWritable: true, isSigner: false },
     { pubkey: collateralPda(trader), isWritable: true, isSigner: false },
-    ...makerMetas,
   ];
   const nd = Math.round((notional * pct) / 100);
   return sendAutoCommit(program, trader, tradeIx, market, Math.round((nd * 2) / 10000), Math.round(nd / 10000), touched);

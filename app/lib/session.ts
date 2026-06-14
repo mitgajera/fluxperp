@@ -20,6 +20,47 @@ interface StoredSession {
 
 const hasWindow = () => typeof window !== "undefined";
 
+// --- deterministic session keyed to the wallet (same wallet → same account) ---
+// The session keypair is seeded from a wallet signature over a fixed message. ed25519
+// signatures are deterministic, so the SAME wallet always derives the SAME session key
+// (and thus the same collateral / position PDAs) — deposits persist across devices.
+const SESSION_MESSAGE =
+  "Sign in to FluxPerp.\n\nThis creates your deterministic trading session key. " +
+  "It does NOT authorize any transfer or transaction.\n\nWallet:";
+
+const walletKey = (wallet: string) => `fluxperp_session_v2_${wallet}`;
+
+export function cachedSessionFor(wallet: string): Keypair | null {
+  if (!hasWindow()) return null;
+  const raw = window.localStorage.getItem(walletKey(wallet));
+  if (!raw) return null;
+  try {
+    return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(raw) as number[]));
+  } catch {
+    return null;
+  }
+}
+
+export async function deriveSession(
+  wallet: string,
+  signMessage: (m: Uint8Array) => Promise<Uint8Array>
+): Promise<Keypair> {
+  const cached = cachedSessionFor(wallet);
+  if (cached) return cached;
+  const msg = new TextEncoder().encode(`${SESSION_MESSAGE} ${wallet}`);
+  const sig = await signMessage(msg);
+  const buf = new ArrayBuffer(sig.length);
+  new Uint8Array(buf).set(sig);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", buf));
+  const kp = Keypair.fromSeed(digest.slice(0, 32));
+  if (hasWindow()) window.localStorage.setItem(walletKey(wallet), JSON.stringify(Array.from(kp.secretKey)));
+  return kp;
+}
+
+export function clearSessionFor(wallet: string) {
+  if (hasWindow()) window.localStorage.removeItem(walletKey(wallet));
+}
+
 export function loadSession(): Keypair | null {
   if (!hasWindow()) return null;
   const raw = window.localStorage.getItem(STORAGE_KEY);

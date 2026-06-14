@@ -21,7 +21,6 @@ import {
 } from "@solana/web3.js";
 import {
   createAssociatedTokenAccountIdempotentInstruction,
-  createTransferInstruction,
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import type { Fluxperp } from "./idl/fluxperp";
@@ -49,7 +48,7 @@ import type {
   TriggerOrders,
   Fill,
 } from "./types";
-import { loadSession, createSession, clearSession, sessionWallet } from "./session";
+import { deriveSession, cachedSessionFor, sessionWallet } from "./session";
 import * as actions from "./trade-actions";
 import type { ClosedTrade } from "../components/ShareCard";
 import {
@@ -135,7 +134,7 @@ export const useTrading = () => {
 };
 
 const CANDLE_SECONDS = 5;
-const MAX_CANDLES = 180;
+const MAX_CANDLES = 1500;  // ~2h of 5s base candles, aggregated up to the selected timeframe
 const SYMBOLS = ["SOL-PERP", "BTC-PERP"];
 
 export function TradingProvider({ children }: { children: React.ReactNode }) {
@@ -169,6 +168,15 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
 
   const mintRef = useRef<PublicKey | null>(null);
 
+  // latest candles, mirrored into a ref so the persist interval can read them
+  const candlesRef = useRef<Candle[]>([]);
+  candlesRef.current = candles;
+  useEffect(() => {
+    const onUnload = () => saveCandles(market, candlesRef.current);
+    window.addEventListener("beforeunload", onUnload);
+    return () => window.removeEventListener("beforeunload", onUnload);
+  }, [market]);
+
   const getMint = useCallback(async (): Promise<PublicKey> => {
     if (mintRef.current) return mintRef.current;
     const info = await l1Connection().getAccountInfo(vaultPda());
@@ -189,7 +197,7 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
     setOrderbook(null);
     setFills([]);
     setPrice(null);
-    setCandles([]);
+    setCandles(loadCandles(market)); // restore persisted history so the chart is continuous
     setRisk(null);
     const conn = erConnection();
     const uR = subscribe(conn, riskEnginePda(market), decodeRiskEngine, (re) => setRisk(re));
@@ -207,19 +215,33 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
         setLatencyMs(await erPing(conn));
       } catch {}
     }, 3000);
+    // persist candles periodically + on switch/unmount so they survive navigation/reload
+    const persist = setInterval(() => saveCandles(market, candlesRef.current), 4000);
     return () => {
+      saveCandles(market, candlesRef.current);
       u1();
       u2();
       u3();
       uR();
       clearInterval(ping);
+      clearInterval(persist);
     };
   }, [market]);
 
+  // when a wallet connects, restore its deterministic session if already derived
   useEffect(() => {
-    const kp = loadSession();
+    if (!wallet.publicKey) {
+      if (sessionKp.current) {
+        sessionKp.current = null;
+        erProg.current = null;
+        l1Prog.current = null;
+        setSessionPubkey(null);
+      }
+      return;
+    }
+    const kp = cachedSessionFor(wallet.publicKey.toBase58());
     if (kp) attachSession(kp);
-  }, []);
+  }, [wallet.publicKey]);
 
   function attachSession(kp: Keypair) {
     sessionKp.current = kp;
@@ -291,24 +313,24 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
   }, [sessionPubkey, position, collateral]);
 
   const startSession = useCallback(async () => {
-    if (!wallet.publicKey || !wallet.signTransaction) {
+    if (!wallet.publicKey || !wallet.signTransaction || !wallet.signMessage) {
       toast({ kind: "error", text: "Connect a wallet first" });
       return;
     }
     try {
-      let kp = loadSession();
       const l1 = l1Connection();
-      if (!kp) {
-        setSessionStatus("creating session key…");
-        kp = createSession();
+      // deterministic session key from a wallet signature — same wallet, same account
+      setSessionStatus("sign to create your session…");
+      const kp = await deriveSession(wallet.publicKey.toBase58(), wallet.signMessage);
 
-        const vaultInfo = await l1.getAccountInfo(vaultPda());
-        if (!vaultInfo) throw new Error("market not initialized");
-        const mint = new PublicKey(vaultInfo.data.slice(0, 32));
+      const vaultInfo = await l1.getAccountInfo(vaultPda());
+      if (!vaultInfo) throw new Error("market not initialized");
+      const mint = new PublicKey(vaultInfo.data.slice(0, 32));
+      const sessionAta = getAssociatedTokenAddressSync(mint, kp.publicKey);
 
-        const sessionAta = getAssociatedTokenAddressSync(mint, kp.publicKey);
-        const walletAta = getAssociatedTokenAddressSync(mint, wallet.publicKey);
-
+      // top up the session with SOL for L1 fees only if it's low (so re-login is free)
+      const bal = await l1.getBalance(kp.publicKey);
+      if (bal < 0.05 * LAMPORTS_PER_SOL) {
         setSessionStatus("funding session (approve in wallet)…");
         const fundTx = new Transaction().add(
           SystemProgram.transfer({
@@ -323,7 +345,6 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
         const signed = await wallet.signTransaction(fundTx);
         const fsig = await l1.sendRawTransaction(signed.serialize());
         await l1.confirmTransaction(fsig, "confirmed");
-        void walletAta;
       }
       attachSession(kp);
       setSessionStatus("session ready");
@@ -335,9 +356,9 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
   }, [wallet, toast]);
 
   const endSession = useCallback(() => {
-    clearSession();
     sessionKp.current = null;
     erProg.current = null;
+    l1Prog.current = null;
     setSessionPubkey(null);
     setSessionStatus("");
   }, []);
@@ -509,28 +530,42 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
       }
       const kp = sessionKp.current!;
       const l1p = l1Prog.current!;
+      const erp = erProg.current!;
       const l1 = l1Connection();
       try {
         const mint = await getMint();
-        const sAta = getAssociatedTokenAddressSync(mint, kp.publicKey);
-        const wAta = getAssociatedTokenAddressSync(mint, wallet.publicKey);
 
-        setTxStatus("Funding session with USDC (approve in wallet)…");
-        const tx = new Transaction().add(
-          createAssociatedTokenAccountIdempotentInstruction(wallet.publicKey, sAta, kp.publicKey, mint),
-          createTransferInstruction(wAta, sAta, wallet.publicKey, Math.round(amountUsdc * 1e6))
-        );
-        tx.feePayer = wallet.publicKey;
-        tx.recentBlockhash = (await l1.getLatestBlockhash("confirmed")).blockhash;
-        const signed = await wallet.signTransaction(tx);
-        await l1.confirmTransaction(await l1.sendRawTransaction(signed.serialize()), "confirmed");
+        setTxStatus("Requesting test USDC from the faucet…");
+        const res = await fetch("/api/faucet", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ owner: kp.publicKey.toBase58(), amount: amountUsdc }),
+        });
+        if (!res.ok) {
+          const j = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(j.error || "faucet request failed");
+        }
 
+        // if the collateral is already delegated (re-deposit), bring it back to L1 first —
+        // the deposit writes on L1, so the account must be owned by our program.
+        const cinfo = await l1.getAccountInfo(collPda(kp.publicKey));
+        if (cinfo && cinfo.owner.equals(DELEGATION_PROGRAM)) {
+          setTxStatus("Undelegating to add funds…");
+          await actions.undelegateUser(erp, kp.publicKey, market);
+          for (let i = 0; i < 30; i++) {
+            const info = await l1.getAccountInfo(collPda(kp.publicKey));
+            if (info && info.owner.equals(l1p.programId)) break;
+            await new Promise((r) => setTimeout(r, 1500));
+          }
+        }
+
+        // init + delegate positions for every market so SOL and BTC are both tradeable
         setTxStatus("Initializing collateral…");
-        await ensureInit(l1p, kp.publicKey, market);
+        for (const m of [MARKET_SOL, MARKET_BTC]) await ensureInit(l1p, kp.publicKey, m);
         setTxStatus("Depositing to vault…");
         await actions.depositCollateral(l1p, kp.publicKey, mint, amountUsdc);
         setTxStatus("Delegating to the ER…");
-        await ensureDelegated(l1p, kp.publicKey, market);
+        for (const m of [MARKET_SOL, MARKET_BTC]) await ensureDelegated(l1p, kp.publicKey, m);
         setTxStatus("");
         toast({ kind: "info", text: `Deposited ${amountUsdc} USDC` });
       } catch (e) {
@@ -651,6 +686,26 @@ async function ensureDelegated(p: Program<Fluxperp>, user: PublicKey, mkt: numbe
   if (!(await deleg(collPda(user)))) await p.methods.delegateCollateral().accountsPartial({ payer: user, collateral: collPda(user) }).rpc();
   if (!(await deleg(posPda(user, mkt)))) await p.methods.delegatePosition(mkt).accountsPartial({ payer: user, position: posPda(user, mkt) }).rpc();
   if (!(await deleg(trigPda(user, mkt)))) await p.methods.delegateTriggers(mkt).accountsPartial({ payer: user, triggers: trigPda(user, mkt) }).rpc();
+}
+
+const CANDLE_STORE = "fluxperp:candles:";
+
+function loadCandles(market: number): Candle[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(CANDLE_STORE + market);
+    const arr = raw ? (JSON.parse(raw) as Candle[]) : [];
+    return Array.isArray(arr) ? arr.slice(-MAX_CANDLES) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCandles(market: number, candles: Candle[]) {
+  if (typeof window === "undefined" || candles.length === 0) return;
+  try {
+    window.localStorage.setItem(CANDLE_STORE + market, JSON.stringify(candles.slice(-MAX_CANDLES)));
+  } catch {}
 }
 
 function pushCandle(setCandles: React.Dispatch<React.SetStateAction<Candle[]>>, priceVal: number) {
