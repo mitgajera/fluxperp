@@ -85,7 +85,8 @@ export async function sendPushPrice(
   tx.feePayer = program.provider.publicKey!;
   tx.recentBlockhash = (await conn.getLatestBlockhash("confirmed")).blockhash;
   const signed = await (program.provider as anchor.AnchorProvider).wallet.signTransaction(tx);
-  return conn.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 2 });
+  // preflight ON so an on-chain failure (e.g. wrong signer) surfaces instead of being hidden
+  return conn.sendRawTransaction(signed.serialize(), { skipPreflight: false, maxRetries: 2 });
 }
 
 process.on("unhandledRejection", (e) => console.error("unhandledRejection:", String(e).slice(0, 120)));
@@ -95,6 +96,7 @@ async function main() {
   if (!walletPath) throw new Error("set ANCHOR_WALLET to the publisher keypair path");
   const kp = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(walletPath, "utf8"))));
   const program = erProgram(new anchor.Wallet(kp));
+  console.log(`publisher wallet: ${kp.publicKey.toBase58()} (must equal the feed's authorized publisher)`);
 
   const intervalMs = Number(process.env.PUBLISH_INTERVAL_MS || 400);
   const wanted = (process.env.MARKETS || "0,1").split(",").map(Number);
