@@ -184,27 +184,50 @@ async function quote() {
   }
 }
 
-// Taker bot: alternate sides and sweep a small amount off the maker's book so the market
-// continuously prints trades (the FillLog updates -> the UI trades feed stays live).
+// Taker bot: sweep a small amount off the MAKER's touch so the market continuously prints
+// trades — but never consume a user's resting limit order (so user limits actually wait and
+// only fill when the price genuinely moves to them via the maker's crossing quote).
 let takerLong = true;
 async function takerTrade() {
   const ob: any = await erpT.account.orderbookState.fetch(orderbook);
-  const side = takerLong ? "long" : "short";
-  const opp = side === "long" ? ob.asks : ob.bids;
-  if (!opp.length) return;
-  takerLong = !takerLong;
-  const size = +(0.5 + Math.random() * 2.5).toFixed(3);
-  const owners = [...new Set(opp.map((o: any) => o.owner.toBase58()))] as string[];
+  const me = maker.publicKey.toBase58();
+  const asks = [...ob.asks].sort((a: any, b: any) => a.price.toNumber() - b.price.toNumber());
+  const bids = [...ob.bids].sort((a: any, b: any) => b.price.toNumber() - a.price.toNumber());
+  const bestAsk = asks[0];
+  const bestBid = bids[0];
+  // only take when the touch is the maker's own order
+  const canBuy = bestAsk && bestAsk.owner.toBase58() === me;
+  const canSell = bestBid && bestBid.owner.toBase58() === me;
+  let side: "long" | "short";
+  if (canBuy && canSell) { side = takerLong ? "long" : "short"; takerLong = !takerLong; }
+  else if (canBuy) side = "long";
+  else if (canSell) side = "short";
+  else return; // both touches are user orders — leave them resting
+
+  const touch = side === "long" ? bestAsk : bestBid;
+  const cap = touch.size.toNumber() / 1e6;             // never spill past the maker's touch
+  const size = Math.min(cap, +(0.4 + Math.random() * 2).toFixed(3));
+  if (size < 0.05) return;
+
   const ix = await erpT.methods
     .placeOrder(MARKET, side === "long" ? { long: {} } : { short: {} }, new anchor.BN(0), f6(size), { market: {} })
     .accountsStrict({ taker: taker.publicKey, marketConfig, orderbook, fillLog, takerPosition: posOf(taker.publicKey), takerCollateral: collOf(taker.publicKey), riskEngine: null, marginProfile: null })
-    .remainingAccounts(ownerAccts(owners))
+    .remainingAccounts(ownerAccts([me]))
     .instruction();
   const tx = new Transaction().add(ix);
   tx.feePayer = taker.publicKey;
   tx.recentBlockhash = (await erConn.getLatestBlockhash("confirmed")).blockhash;
   tx.sign(taker);
-  await erConn.sendRawTransaction(tx.serialize(), { skipPreflight: true, maxRetries: 2 }).catch(() => {});
+  // preflight on so a bad trade surfaces instead of silently doing nothing
+  try {
+    const sig = await erConn.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 2 });
+    console.log(`taker ${side} ${size.toFixed(2)} @ ${(touch.price.toNumber() / 1e6).toFixed(3)} -> ${sig.slice(0, 8)}`);
+  } catch (e) {
+    const m = (e as Error).message;
+    const logs = (e as { logs?: string[] }).logs;
+    console.error(`taker ${side} ${size.toFixed(2)} FAILED: ${m.slice(0, 140)}`);
+    if (logs?.length) console.error(logs.slice(-6).join("\n"));
+  }
 }
 
 const retry = async <T>(fn: () => Promise<T>, label: string): Promise<T> => {
