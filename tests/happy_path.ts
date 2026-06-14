@@ -258,10 +258,6 @@ it("Wallet B market-buys 1 + commit_state in ONE tx (auto-commit)", async () => 
     .commitState(MARKET_INDEX, INSURANCE_DELTA, PROTOCOL_DELTA)
     .accountsPartial({
       payer: B.publicKey,
-
-      orderbook,
-      fillLog,
-      priceFeed,
       insuranceFund,
     })
     .remainingAccounts([
