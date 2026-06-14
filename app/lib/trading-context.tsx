@@ -916,9 +916,11 @@ function subscribeTriggers(
 
 function cleanErr(e: unknown): string {
   const m = (e as Error)?.message || String(e);
-  if (m.includes("NoLiquidity")) return "No liquidity to fill — try a smaller size";
-  if (m.includes("InsufficientMargin")) return "Insufficient margin";
-  if (/PriceOutOfBounds|TooFarFromOracle|StalePrice|0x177[0-9a-f]/i.test(m)) return "Price feed stale — wait a moment and retry";
+  // map the specific program errors (codes are 6000 + index, i.e. 0x1770+)
+  if (/NoLiquidity|0x177d\b/i.test(m)) return "No liquidity — the market-maker isn't quoting yet";
+  if (/InsufficientMargin|0x177c\b/i.test(m)) return "Insufficient margin";
+  if (/MakerAccountMismatch|0x1772\b/i.test(m)) return "Stale liquidity — the book hasn't repriced yet";
+  if (/SizeBelowLot|0x1777\b/i.test(m)) return "Order size too small";
   if (m.includes("session")) return m;
   // rollup wraps program errors as a verification error; the real cause is logged to the console
   if (/verification error|Error processing Instruction|custom program error/i.test(m))
