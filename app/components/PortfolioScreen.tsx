@@ -12,7 +12,7 @@ import Logo from "./Logo";
 const usdf = (n: number) => usd(Math.round(n * 1e6));
 
 export default function PortfolioScreen() {
-  const { collateral, position, price, fills, sessionPubkey, deposit, withdraw, txStatus, portfolioMargin } = useTrading();
+  const { collateral, position, price, fills, sessionPubkey, deposit, withdraw, claimFaucet, txStatus, portfolioMargin } = useTrading();
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState<"deposit" | "withdraw" | null>(null);
 
@@ -131,7 +131,15 @@ export default function PortfolioScreen() {
               {}
               <Panel title="Deposit / Withdraw">
                 <div className="p-4 space-y-3">
-                  <label className="flex items-center justify-between bg-surface-2 border border-line rounded-md px-3 h-11">
+                  <button
+                    onClick={async () => { setBusy("deposit"); try { await claimFaucet(); } finally { setBusy(null); } }}
+                    disabled={!!busy}
+                    className="w-full h-9 rounded-md bg-surface-2 border border-line text-2xs uppercase tracking-wide text-muted hover:text-txt hover:border-line-strong transition-colors cursor-pointer disabled:opacity-40 flex items-center justify-center gap-1.5"
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 2v6M12 8c-3 0-5 1.5-5 4v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-6c0-2.5-2-4-5-4Z"/></svg>
+                    Get 1,000 test USDC
+                  </button>
+                  <label className="flex items-center justify-between bg-surface-2 border border-line rounded-md px-3 h-11 focus-within:border-line-strong transition-colors">
                     <span className="text-2xs text-faint">Amount (USDC)</span>
                     <input
                       inputMode="decimal"

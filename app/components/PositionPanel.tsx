@@ -89,7 +89,7 @@ function PositionList({
   const positive = upnl >= 0;
 
   return (
-    <div className="p-2">
+    <div className="p-2 max-w-xl">
       <div className="rounded-md border border-line bg-surface-2 p-3">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
