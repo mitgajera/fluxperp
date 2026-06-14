@@ -151,17 +151,16 @@ export async function placeOrder(
 ) {
   // Always match against the REAL on-chain book (the passed `book` may be the synthetic
   // liveness fallback, whose orders are owned by the zero key). Refetch fresh to avoid
-  // racing the live market-maker/taker, and pass EVERY distinct maker on the side we sweep
-  // so any order matched has its accounts present (prevents MakerAccountMismatch).
+  // racing the live market-maker/taker. Pass only the makers of the orders we'll actually
+  // sweep — passing extra (possibly non-delegated) makers as writable gets rejected by the ER.
   let live = book;
   try {
     live = (await program.account.orderbookState.fetch(orderbookPda(p.market))) as unknown as OrderbookState;
   } catch {
     /* keep the passed book */
   }
-  const { notional } = expectedFill(live, p);
-  const oppositeSide = p.side === "long" ? live.asks : live.bids;
-  const makerMetas = makerPairs(oppositeSide, p.market, { excludeOwner: trader, topN: 20 });
+  const { notional, makers } = expectedFill(live, p);
+  const makerMetas = makerPairs(makers, p.market, { excludeOwner: trader });
   const tradeIx = await program.methods
     .placeOrder(
       p.market,
@@ -237,7 +236,8 @@ export async function closePosition(
 }
 
 // Refetch the REAL on-chain book (the passed `book` may be the synthetic fallback) and return
-// every distinct maker on the side we'll sweep, so any matched order has its accounts present.
+// the makers at the top of the side we'll sweep. Only the best orders get matched, so passing
+// extra (possibly non-delegated) makers as writable would be rejected by the ER.
 async function makersFor(
   program: Program<Fluxperp>,
   book: OrderbookState,
@@ -252,7 +252,10 @@ async function makersFor(
     /* keep the passed book */
   }
   const opposite = takerSide === "long" ? live.asks : live.bids;
-  return makerPairs(opposite, market, { excludeOwner: trader, topN: 20 });
+  const sorted = [...opposite].sort((a, b) =>
+    takerSide === "long" ? a.price.cmp(b.price) : b.price.cmp(a.price)
+  );
+  return makerPairs(sorted, market, { excludeOwner: trader });
 }
 
 export async function reversePosition(
