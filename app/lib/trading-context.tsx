@@ -782,7 +782,7 @@ async function ensureDelegated(p: Program<Fluxperp>, user: PublicKey, mkt: numbe
   if (!(await deleg(trigPda(user, mkt)))) await p.methods.delegateTriggers(mkt).accountsPartial({ payer: user, triggers: trigPda(user, mkt) }).rpc();
 }
 
-const CANDLE_STORE = "fluxperp:candles:";
+const CANDLE_STORE = "fluxperp:candles:v2:"; // bump to drop corrupted/sawtooth history
 // cold-start fallback prices (only used until the real Binance-backed feed arrives)
 const SEED_BASE: Record<number, number> = { [MARKET_SOL]: 71, [MARKET_BTC]: 65700 };
 
