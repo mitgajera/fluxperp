@@ -50,7 +50,7 @@ export default function Chart() {
     if (!containerRef.current) return;
     const chart = createChart(containerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: "#0e0e10" },
+        background: { type: ColorType.Solid, color: "#0c0c0c" },
         textColor: "#8a8a8a",
         fontFamily: "var(--font-geist-mono), monospace",
         fontSize: 11,
@@ -76,12 +76,12 @@ export default function Chart() {
       autoSize: true,
     });
     const series = chart.addCandlestickSeries({
-      upColor: "#26a69a",
-      downColor: "#ef5350",
-      borderUpColor: "#26a69a",
-      borderDownColor: "#ef5350",
-      wickUpColor: "#26a69a",
-      wickDownColor: "#ef5350",
+      upColor: "#00B54C",
+      downColor: "#E12020",
+      borderUpColor: "#00B54C",
+      borderDownColor: "#E12020",
+      wickUpColor: "#00B54C",
+      wickDownColor: "#E12020",
       priceFormat: { type: "price", precision: 3, minMove: 0.001 },
     });
     chartRef.current = chart;
