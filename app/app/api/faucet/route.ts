@@ -14,14 +14,43 @@ const L1_RPC = process.env.NEXT_PUBLIC_SOLANA_L1_RPC || "https://api.devnet.sola
 const CLAIM_USDC = 1000; // fixed amount per claim
 const COOLDOWN_MS = 2 * 60 * 60 * 1000; // one claim per wallet per 2 hours
 
-// in-memory cooldown (per dev-server process — fine for devnet)
-const lastClaim = new Map<string, number>();
+// Cooldown store: Upstash/Vercel KV via REST when configured (durable across serverless
+// instances on Vercel), else an in-memory Map (fine for local dev / single process).
+const KV_URL = process.env.KV_REST_API_URL;
+const KV_TOKEN = process.env.KV_REST_API_TOKEN;
+const mem = new Map<string, number>();
+
+async function getLastClaim(owner: string): Promise<number> {
+  if (KV_URL && KV_TOKEN) {
+    try {
+      const r = await fetch(`${KV_URL}/get/faucet:${owner}`, { headers: { Authorization: `Bearer ${KV_TOKEN}` }, cache: "no-store" });
+      const j = (await r.json()) as { result?: string | null };
+      return j.result ? Number(j.result) : 0;
+    } catch {
+      return mem.get(owner) ?? 0;
+    }
+  }
+  return mem.get(owner) ?? 0;
+}
+
+async function setLastClaim(owner: string, ts: number): Promise<void> {
+  mem.set(owner, ts);
+  if (KV_URL && KV_TOKEN) {
+    try {
+      // auto-expire the key after the cooldown so the store stays clean
+      await fetch(`${KV_URL}/set/faucet:${owner}/${ts}/EX/${Math.ceil(COOLDOWN_MS / 1000)}`, {
+        headers: { Authorization: `Bearer ${KV_TOKEN}` },
+        cache: "no-store",
+      });
+    } catch {}
+  }
+}
 
 export async function GET(req: NextRequest) {
   // lets the UI show remaining cooldown without minting
   const owner = req.nextUrl.searchParams.get("owner");
   if (!owner) return NextResponse.json({ amount: CLAIM_USDC, cooldownMs: COOLDOWN_MS });
-  const last = lastClaim.get(owner) ?? 0;
+  const last = await getLastClaim(owner);
   const remaining = Math.max(0, COOLDOWN_MS - (Date.now() - last));
   return NextResponse.json({ amount: CLAIM_USDC, cooldownMs: COOLDOWN_MS, remainingMs: remaining, ready: remaining === 0 });
 }
@@ -44,7 +73,7 @@ export async function POST(req: NextRequest) {
 
   // rate limit: 1000 USDC per wallet per 2 hours
   const key = owner.toBase58();
-  const last = lastClaim.get(key) ?? 0;
+  const last = await getLastClaim(key);
   const remaining = COOLDOWN_MS - (Date.now() - last);
   if (remaining > 0) {
     const mins = Math.ceil(remaining / 60000);
@@ -66,7 +95,7 @@ export async function POST(req: NextRequest) {
     );
     const signature = await sendAndConfirmTransaction(conn, tx, [authority], { commitment: "confirmed" });
 
-    lastClaim.set(key, Date.now());
+    await setLastClaim(key, Date.now());
     return NextResponse.json({ signature, mint: mint.toBase58(), amount: CLAIM_USDC, cooldownMs: COOLDOWN_MS });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

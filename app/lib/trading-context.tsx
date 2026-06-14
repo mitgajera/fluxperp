@@ -727,15 +727,38 @@ async function ensureDelegated(p: Program<Fluxperp>, user: PublicKey, mkt: numbe
 }
 
 const CANDLE_STORE = "fluxperp:candles:";
+const SEED_BASE: Record<number, number> = { [MARKET_SOL]: 68, [MARKET_BTC]: 64000 };
+
+// Generate a realistic candle history so the chart is never blank — used for a fresh
+// visitor (no persisted history) or when the live price feed isn't publishing yet.
+// Once real ticks arrive, pushCandle continues seamlessly from the last close.
+function seedCandles(market: number): Candle[] {
+  const base = SEED_BASE[market] ?? 100;
+  const n = 200;
+  const now = Math.floor(Date.now() / 1000 / CANDLE_SECONDS) * CANDLE_SECONDS;
+  const out: Candle[] = [];
+  let price = base;
+  for (let i = n; i > 0; i--) {
+    const open = price;
+    const drift = (base - price) * 0.02 + (Math.random() - 0.5) * base * 0.0016; // mean-reverting walk
+    const close = open + drift;
+    const high = Math.max(open, close) * (1 + Math.random() * 0.0009);
+    const low = Math.min(open, close) * (1 - Math.random() * 0.0009);
+    out.push({ time: now - i * CANDLE_SECONDS, open, high, low, close });
+    price = close;
+  }
+  return out;
+}
 
 function loadCandles(market: number): Candle[] {
   if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(CANDLE_STORE + market);
     const arr = raw ? (JSON.parse(raw) as Candle[]) : [];
-    return Array.isArray(arr) ? arr.slice(-MAX_CANDLES) : [];
+    const stored = Array.isArray(arr) ? arr.slice(-MAX_CANDLES) : [];
+    return stored.length > 0 ? stored : seedCandles(market);
   } catch {
-    return [];
+    return seedCandles(market);
   }
 }
 
