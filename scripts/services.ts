@@ -9,6 +9,7 @@
 // Optional: MARKETS (default "0,1"), plus any MM_*/PUBLISH_INTERVAL_MS/SYNTH_VOL_BPS tuning.
 
 import { spawn } from "child_process";
+import { createServer } from "http";
 import { writeFileSync, mkdtempSync, existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -51,6 +52,15 @@ function run(s: Svc) {
 
 console.log(`[services] starting: ${svcs.map((s) => s.name).join(", ")} (markets ${markets.join(",")})`);
 svcs.forEach(run);
+
+// Minimal health server so this can deploy as a (free) web service and survive health checks.
+// Keep it awake with an external uptime pinger (UptimeRobot / cron-job.org) hitting "/" every
+// ~10 min so a free instance never sleeps.
+const port = Number(process.env.PORT) || 10000;
+createServer((_req, res) => {
+  res.writeHead(200, { "content-type": "text/plain" });
+  res.end("fluxperp services ok\n");
+}).listen(port, () => console.log(`[services] health server on :${port}`));
 
 process.on("SIGTERM", () => process.exit(0));
 process.on("SIGINT", () => process.exit(0));

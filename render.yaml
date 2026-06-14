@@ -2,12 +2,16 @@
 # Render → New → Blueprint → point at this repo. Then set WALLET_SECRET (deployer keypair
 # JSON array) as a secret env var. The frontend deploys separately on Vercel (root dir = app/).
 services:
-  - type: worker
+  # Free web service (workers are paid on Render). It exposes a health port; keep it awake
+  # with a free uptime pinger (UptimeRobot / cron-job.org) hitting the URL every ~10 min so
+  # the free instance never sleeps and the data services keep running 24/7.
+  - type: web
     name: fluxperp-services
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: starter
+    plan: free
     autoDeploy: true
+    healthCheckPath: /
     envVars:
       - key: WALLET_SECRET
         sync: false # set this as a secret in the dashboard
