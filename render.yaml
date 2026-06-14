@@ -1,0 +1,21 @@
+# Render Blueprint — deploys the FluxPerp data services as one always-on worker.
+# Render → New → Blueprint → point at this repo. Then set WALLET_SECRET (deployer keypair
+# JSON array) as a secret env var. The frontend deploys separately on Vercel (root dir = app/).
+services:
+  - type: worker
+    name: fluxperp-services
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    autoDeploy: true
+    envVars:
+      - key: WALLET_SECRET
+        sync: false # set this as a secret in the dashboard
+      - key: MARKETS
+        value: "0,1"
+      - key: SOLANA_L1_RPC
+        value: https://api.devnet.solana.com
+      - key: ER_RPC
+        value: https://devnet-as.magicblock.app
+      - key: ER_WS
+        value: wss://devnet-as.magicblock.app

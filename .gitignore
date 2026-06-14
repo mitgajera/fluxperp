@@ -1,6 +1,13 @@
-# Anchor / Rust build artifacts (includes the program keypair under target/deploy)
+# Anchor / Rust build artifacts (includes the program keypair under target/deploy).
+# Keep only the IDL + generated types — the worker services (scripts/) import them.
 .anchor
-target
+target/*
+!target/idl
+!target/types
+target/idl/*
+!target/idl/fluxperp.json
+target/types/*
+!target/types/fluxperp.ts
 **/*.rs.bk
 
 # Node / Next.js
