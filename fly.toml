@@ -1,0 +1,19 @@
+# Fly.io config for the FluxPerp data services worker (publisher + market-makers + keeper).
+# Always-on: no auto-stop, 1 machine minimum. Set secrets with `fly secrets set` (see below).
+app = "fluxperp"
+primary_region = "ams"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 10000        # matches the health server in scripts/services.ts
+  force_https = true
+  auto_stop_machines = false   # 24/7 — do NOT sleep on idle
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512              # 256MB OOMs with 4 ts-node processes
