@@ -80,8 +80,11 @@ function PositionList({
   const isLong = "long" in position.side;
   const size = position.size.toNumber();
   const entry = position.entryPrice.toNumber();
-  const upnl = ((isLong ? mark * 1e6 - entry : entry - mark * 1e6) * size) / 1e6;
-  const upnlPct = entry > 0 ? (upnl / ((entry * size) / 1e6 / 10)) : 0;
+  const sizeSol = size / 1e6;
+  const entryUsd = entry / 1e6;
+  const marginUsd = position.marginAllocated.toNumber() / 1e6;
+  const upnl = (isLong ? mark - entryUsd : entryUsd - mark) * sizeSol; // mark is already USD
+  const upnlPct = marginUsd > 0 ? (upnl / marginUsd) * 100 : 0;
 
   const positive = upnl >= 0;
 

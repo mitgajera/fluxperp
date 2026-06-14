@@ -8,6 +8,7 @@ import { decodeLeaderboard } from "../lib/deserialize";
 import { usd } from "../lib/format";
 import type { Leaderboard } from "../lib/types";
 import SessionKeyButton from "./SessionKeyButton";
+import Logo from "./Logo";
 
 const short = (k: { toBase58: () => string }) => {
   const s = k.toBase58();
@@ -54,8 +55,8 @@ export default function LeaderboardScreen() {
   return (
     <div className="min-h-screen bg-surface-0 text-txt">
       <header className="h-12 flex items-center gap-6 px-4 border-b border-line bg-surface-1">
-        <Link href="/" className="text-long font-bold tracking-tight text-base drop-shadow-[0_0_8px_rgba(57,255,20,0.5)]">
-          FluxPerp
+        <Link href="/" className="opacity-95 hover:opacity-100 transition-opacity">
+          <Logo />
         </Link>
         <nav className="flex items-center gap-1 text-2xs">
           <Link href="/trade" className="px-3 h-7 grid place-items-center rounded text-faint hover:text-txt transition-colors">Trade</Link>

@@ -7,6 +7,7 @@ import { px, sz, usd, signedUsd } from "../lib/format";
 import type { PortfolioMargin } from "../lib/portfolio";
 import SessionKeyButton from "./SessionKeyButton";
 import FillToast from "./FillToast";
+import Logo from "./Logo";
 
 const usdf = (n: number) => usd(Math.round(n * 1e6));
 
@@ -19,8 +20,9 @@ export default function PortfolioScreen() {
   const c = collateral;
   const hasPos = !!position && !("flat" in position.side);
   const upnl = hasPos
-    ? (("long" in position!.side ? mark - position!.entryPrice.toNumber() : position!.entryPrice.toNumber() - mark) *
+    ? ((("long" in position!.side ? mark - position!.entryPrice.toNumber() : position!.entryPrice.toNumber() - mark) *
         position!.size.toNumber()) /
+        1e6) /
       1e6
     : 0;
 
@@ -43,8 +45,8 @@ export default function PortfolioScreen() {
   return (
     <div className="min-h-screen bg-surface-0 text-txt">
       <header className="h-12 flex items-center gap-6 px-4 border-b border-line bg-surface-1">
-        <Link href="/" className="text-long font-bold tracking-tight text-base drop-shadow-[0_0_8px_rgba(57,255,20,0.5)]">
-          FluxPerp
+        <Link href="/" className="opacity-95 hover:opacity-100 transition-opacity">
+          <Logo />
         </Link>
         <nav className="flex items-center gap-1 text-2xs">
           <Link href="/trade" className="px-3 h-7 grid place-items-center rounded text-faint hover:text-txt transition-colors">
@@ -181,7 +183,7 @@ function PortfolioMarginPanel({ pm }: { pm: PortfolioMargin | null }) {
   const healthPct = pm ? pm.accountHealthBps / 100 : 0;
   const healthColor = healthPct >= 20 ? "text-long" : healthPct >= 8 ? "text-amber-400" : "text-short";
   return (
-    <Panel title="Portfolio Margin — cross-market netting (§A6)">
+    <Panel title="Portfolio Margin — cross-market netting">
       {!pm || pm.legs.length === 0 ? (
         <Empty>No open positions across markets</Empty>
       ) : (

@@ -12,6 +12,9 @@ export interface ClosedTrade {
   pnlUsd: number;
 }
 
+const W = 1200;
+const H = 675;
+
 export default function ShareCard({ trade, onClose }: { trade: ClosedTrade; onClose: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -20,70 +23,138 @@ export default function ShareCard({ trade, onClose }: { trade: ClosedTrade; onCl
     if (!c) return;
     const ctx = c.getContext("2d");
     if (!ctx) return;
-    const W = 1000;
-    const H = 540;
-    c.width = W;
-    c.height = H;
+    const dpr = 2;
+    c.width = W * dpr;
+    c.height = H * dpr;
+    ctx.scale(dpr, dpr);
+
     const win = trade.pnlPct >= 0;
-    const green = "#39ff14";
-    const red = "#ff4d4d";
+    const green = "#2ebd85";
+    const red = "#f6465d";
     const accent = win ? green : red;
+    const accentRGB = win ? "46,189,133" : "246,70,93";
+    const long = trade.side === "long";
 
-    ctx.fillStyle = "#0a0a0a";
+    // backdrop
+    ctx.fillStyle = "#0a0b0d";
     ctx.fillRect(0, 0, W, H);
-    const grad = ctx.createRadialGradient(W * 0.5, -80, 100, W * 0.5, 0, 720);
-    grad.addColorStop(0, win ? "rgba(57,255,20,0.14)" : "rgba(255,77,77,0.12)");
-    grad.addColorStop(1, "rgba(10,10,10,0)");
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, W, H);
-    ctx.strokeStyle = "#1c1c20";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(20, 20, W - 40, H - 40);
 
-    const mono = "600 1px 'Geist Mono', monospace";
-    void mono;
-
-    ctx.fillStyle = green;
-    ctx.font = "700 40px system-ui, sans-serif";
-    ctx.fillText("FluxPerp", 56, 92);
-    ctx.fillStyle = "#5a5a5a";
-    ctx.font = "400 18px system-ui, sans-serif";
-    ctx.fillText("perp trading at ER speed", 58, 120);
-
-    ctx.fillStyle = "#ededed";
-    ctx.font = "700 52px system-ui, sans-serif";
-    ctx.fillText(trade.market, 56, 215);
-    ctx.fillStyle = trade.side === "long" ? green : red;
-    ctx.font = "700 30px system-ui, sans-serif";
-    ctx.fillText(`${trade.side.toUpperCase()} · ${trade.leverage}x`, 56, 258);
-
-    ctx.fillStyle = accent;
-    ctx.font = "800 130px system-ui, sans-serif";
-    const pnlText = `${win ? "+" : ""}${trade.pnlPct.toFixed(2)}%`;
-    ctx.fillText(pnlText, 52, 400);
-    if (win) {
-      ctx.shadowColor = green;
-      ctx.shadowBlur = 30;
-      ctx.fillText(pnlText, 52, 400);
-      ctx.shadowBlur = 0;
+    // faint grid
+    ctx.strokeStyle = "rgba(255,255,255,0.025)";
+    ctx.lineWidth = 1;
+    for (let x = 0; x <= W; x += 48) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, H);
+      ctx.stroke();
+    }
+    for (let y = 0; y <= H; y += 48) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(W, y);
+      ctx.stroke();
     }
 
-    ctx.font = "500 24px 'Geist Mono', monospace";
-    ctx.fillStyle = "#8a8a8a";
-    ctx.fillText("Entry", 56, 470);
-    ctx.fillText("Exit", 320, 470);
-    ctx.fillText("PnL", 560, 470);
-    ctx.fillStyle = "#ededed";
-    ctx.font = "600 30px 'Geist Mono', monospace";
-    ctx.fillText(trade.entry.toFixed(2), 56, 506);
-    ctx.fillText(trade.exit.toFixed(2), 320, 506);
-    ctx.fillStyle = accent;
-    ctx.fillText(`${win ? "+" : ""}$${trade.pnlUsd.toFixed(2)}`, 560, 506);
+    // directional glow (bottom-left)
+    const glow = ctx.createRadialGradient(120, H + 60, 60, 120, H + 60, 720);
+    glow.addColorStop(0, `rgba(${accentRGB},0.20)`);
+    glow.addColorStop(1, "rgba(10,11,13,0)");
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, W, H);
 
-    ctx.fillStyle = "#5a5a5a";
+    // inner border
+    roundRect(ctx, 24, 24, W - 48, H - 48, 24);
+    ctx.strokeStyle = "rgba(255,255,255,0.07)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    const PAD = 72;
+
+    // --- header: logo mark + wordmark ---
+    roundRect(ctx, PAD, 64, 36, 36, 9);
+    ctx.fillStyle = `rgba(${accentRGB},0.14)`;
+    ctx.fill();
+    ctx.fillStyle = green;
+    bolt(ctx, PAD + 18, 82, 14);
+    ctx.font = "700 30px system-ui, sans-serif";
+    ctx.fillStyle = "#e8eaed";
+    ctx.fillText("Flux", PAD + 50, 91);
+    const fluxW = ctx.measureText("Flux").width;
+    ctx.fillStyle = green;
+    ctx.fillText("Perp", PAD + 50 + fluxW, 91);
+
+    // ER badge (top-right)
+    ctx.font = "600 16px system-ui, sans-serif";
+    const badge = "ONCHAIN · MAGICBLOCK ER";
+    const bw = ctx.measureText(badge).width + 32;
+    roundRect(ctx, W - PAD - bw, 66, bw, 32, 16);
+    ctx.fillStyle = "rgba(255,255,255,0.04)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.08)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = "#8b909c";
+    ctx.fillText(badge, W - PAD - bw + 16, 87);
+
+    // --- market + side ---
+    const base = trade.market.split("-")[0].toUpperCase();
+    drawToken(ctx, base, PAD + 17, 196, 34);
+    ctx.font = "700 46px system-ui, sans-serif";
+    ctx.fillStyle = "#e8eaed";
+    ctx.fillText(trade.market, PAD + 50, 212);
+
+    // side pill
+    const pill = `${long ? "LONG" : "SHORT"}  ${trade.leverage}×`;
+    ctx.font = "700 20px system-ui, sans-serif";
+    const pw = ctx.measureText(pill).width + 36;
+    const sideCol = long ? green : red;
+    const sideRGB = long ? "46,189,133" : "246,70,93";
+    roundRect(ctx, PAD + 52 + ctx.measureText(trade.market).width + 24, 178, pw, 38, 19);
+    ctx.fillStyle = `rgba(${sideRGB},0.15)`;
+    ctx.fill();
+    ctx.fillStyle = sideCol;
+    ctx.fillText(pill, PAD + 52 + ctx.measureText(trade.market).width + 24 + 18, 204);
+
+    // --- hero PnL% ---
+    const pnlText = `${win ? "+" : ""}${trade.pnlPct.toFixed(2)}%`;
+    ctx.font = "800 132px system-ui, sans-serif";
+    ctx.fillStyle = accent;
+    if (win) {
+      ctx.shadowColor = `rgba(${accentRGB},0.55)`;
+      ctx.shadowBlur = 40;
+    }
+    ctx.fillText(pnlText, PAD - 4, 400);
+    ctx.shadowBlur = 0;
+
+    // $ amount
+    ctx.font = "600 34px 'Geist Mono', ui-monospace, monospace";
+    ctx.fillStyle = accent;
+    ctx.fillText(`${win ? "+" : "−"}$${Math.abs(trade.pnlUsd).toFixed(2)}`, PAD, 452);
+
+    // --- stat chips: entry -> exit ---
+    const chipY = 520;
+    const chipH = 86;
+    statChip(ctx, PAD, chipY, 300, chipH, "ENTRY", trade.entry.toFixed(3), "#e8eaed");
+    // arrow
+    ctx.strokeStyle = "#585d68";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(PAD + 326, chipY + chipH / 2);
+    ctx.lineTo(PAD + 366, chipY + chipH / 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(PAD + 358, chipY + chipH / 2 - 7);
+    ctx.lineTo(PAD + 366, chipY + chipH / 2);
+    ctx.lineTo(PAD + 358, chipY + chipH / 2 + 7);
+    ctx.stroke();
+    statChip(ctx, PAD + 392, chipY, 300, chipH, "EXIT", trade.exit.toFixed(3), accent);
+
+    // footer tagline (right)
     ctx.font = "400 18px system-ui, sans-serif";
+    ctx.fillStyle = "#585d68";
     ctx.textAlign = "right";
-    ctx.fillText("settled on Solana · zero trusted components", W - 56, H - 44);
+    ctx.fillText("Sub-100ms fills · settled on Solana", W - PAD, H - 76);
+    ctx.fillText("flux.perp", W - PAD, H - 50);
     ctx.textAlign = "left";
   }, [trade]);
 
@@ -98,29 +169,29 @@ export default function ShareCard({ trade, onClose }: { trade: ClosedTrade; onCl
 
   const shareX = () => {
     const win = trade.pnlPct >= 0;
-    const text = `Just ${win ? "closed +" : "closed "}${trade.pnlPct.toFixed(2)}% on ${trade.market} ${trade.side.toUpperCase()} ${trade.leverage}x at @FluxPerp — fully onchain perps inside @magicblock's Ephemeral Rollup. Sub-100ms fills, settled on @solana.`;
+    const text = `${win ? "Closed +" : "Closed "}${trade.pnlPct.toFixed(2)}% on ${trade.market} ${trade.side.toUpperCase()} ${trade.leverage}x at @FluxPerp - fully onchain perps inside @magicblock's Ephemeral Rollup. Sub-100ms fills, settled on @solana.`;
     download();
     window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`, "_blank");
   };
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="bg-surface-1 border border-line rounded-xl p-4 max-w-xl w-full" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-3">
+      <div className="bg-surface-1 border border-line-strong rounded-2xl p-4 max-w-2xl w-full shadow-2xl shadow-black/60" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3 px-1">
           <h2 className="text-sm font-semibold">Position closed</h2>
-          <button onClick={onClose} className="text-faint hover:text-txt cursor-pointer" aria-label="Close">✕</button>
+          <button onClick={onClose} className="text-faint hover:text-txt cursor-pointer h-7 w-7 grid place-items-center rounded-md hover:bg-surface-2 transition-colors" aria-label="Close">✕</button>
         </div>
-        <canvas ref={canvasRef} className="w-full rounded-lg border border-line" />
+        <canvas ref={canvasRef} style={{ aspectRatio: `${W} / ${H}` }} className="w-full rounded-xl border border-line" />
         <div className="flex gap-2 mt-4">
           <button
             onClick={download}
-            className="flex-1 h-10 rounded-md bg-surface-2 border border-line text-sm text-txt hover:border-line-strong transition-colors cursor-pointer"
+            className="flex-1 h-11 rounded-lg bg-surface-2 border border-line text-sm font-medium text-txt hover:border-line-strong transition-colors cursor-pointer"
           >
             Download PNG
           </button>
           <button
             onClick={shareX}
-            className="flex-1 h-10 rounded-md bg-long text-black font-semibold text-sm hover:bg-long/90 transition-colors cursor-pointer shadow-glow-sm"
+            className="flex-1 h-11 rounded-lg bg-long text-black font-semibold text-sm hover:bg-long/90 transition-colors cursor-pointer shadow-glow-sm active:scale-[0.99]"
           >
             Share on X
           </button>
@@ -128,4 +199,84 @@ export default function ShareCard({ trade, onClose }: { trade: ClosedTrade; onCl
       </div>
     </div>
   );
+}
+
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function statChip(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, label: string, value: string, valueColor: string) {
+  roundRect(ctx, x, y, w, h, 14);
+  ctx.fillStyle = "rgba(255,255,255,0.03)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.06)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.font = "600 15px system-ui, sans-serif";
+  ctx.fillStyle = "#585d68";
+  ctx.fillText(label, x + 22, y + 32);
+  ctx.font = "600 38px 'Geist Mono', ui-monospace, monospace";
+  ctx.fillStyle = valueColor;
+  ctx.fillText(value, x + 22, y + 70);
+}
+
+function bolt(ctx: CanvasRenderingContext2D, cx: number, cy: number, s: number) {
+  ctx.save();
+  ctx.translate(cx - s / 2, cy - s / 2);
+  ctx.scale(s / 24, s / 24);
+  ctx.beginPath();
+  ctx.moveTo(13.2, 4);
+  ctx.lineTo(7, 13.2);
+  ctx.lineTo(10.7, 13.2);
+  ctx.lineTo(9.7, 20);
+  ctx.lineTo(16.8, 10.4);
+  ctx.lineTo(12.7, 10.4);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawToken(ctx: CanvasRenderingContext2D, base: string, cx: number, cy: number, size: number) {
+  if (base === "SOL") {
+    const g = ctx.createLinearGradient(cx - size / 2, cy - size / 2, cx + size / 2, cy + size / 2);
+    g.addColorStop(0, "#9945FF");
+    g.addColorStop(1, "#19FB9B");
+    ctx.fillStyle = g;
+    const w = size * 0.92;
+    const h = size * 0.18;
+    const skew = size * 0.18;
+    const gap = size * 0.14;
+    for (let i = -1; i <= 1; i++) {
+      const y = cy + i * (h + gap);
+      const dir = i === 0 ? -1 : 1;
+      ctx.beginPath();
+      ctx.moveTo(cx - w / 2 + (dir < 0 ? skew : 0), y - h / 2);
+      ctx.lineTo(cx + w / 2 + (dir < 0 ? 0 : skew), y - h / 2);
+      ctx.lineTo(cx + w / 2 + (dir < 0 ? skew : 0), y + h / 2);
+      ctx.lineTo(cx - w / 2 + (dir < 0 ? 0 : skew), y + h / 2);
+      ctx.closePath();
+      ctx.fill();
+    }
+  } else if (base === "BTC") {
+    ctx.fillStyle = "#F7931A";
+    ctx.beginPath();
+    ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.font = `700 ${size * 0.7}px system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.fillText("₿", cx, cy + size * 0.25);
+    ctx.textAlign = "left";
+  } else {
+    ctx.fillStyle = "#1d2027";
+    ctx.beginPath();
+    ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
