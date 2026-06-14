@@ -196,10 +196,10 @@ export default function OrderForm() {
           aria-label="Leverage"
         />
         <div className="flex justify-between text-[9px] text-faint mt-1 tnum">
-          {[1, 2, 5, 10].map((n) => (
+          {[1, 2, 5, 10].filter((n) => n < maxLev).concat(maxLev).map((n) => (
             <button
               key={n}
-              onClick={() => setLeverage(Math.min(n, maxLev))}
+              onClick={() => setLeverage(n)}
               className="hover:text-muted transition-colors cursor-pointer"
             >
               {n}×

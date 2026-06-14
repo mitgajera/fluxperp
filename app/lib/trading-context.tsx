@@ -603,8 +603,29 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
         } catch {
           /* no token account yet */
         }
+        // auto-claim from the faucet if the wallet doesn't have enough USDC yet
         if (walletBal < amountUsdc) {
-          throw new Error(`Need ${amountUsdc} USDC in your wallet — claim from the faucet first`);
+          setTxStatus("Claiming test USDC from faucet…");
+          const res = await fetch("/api/faucet", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ owner: wallet.publicKey.toBase58() }),
+          });
+          const j = (await res.json().catch(() => ({}))) as { amount?: number; error?: string };
+          if (!res.ok) throw new Error(j.error || "faucet request failed");
+          // wait for the mint to reflect on L1
+          for (let i = 0; i < 10; i++) {
+            try {
+              walletBal = Number((await getAccount(l1, walletAta)).amount) / 1e6;
+            } catch {
+              /* ata not visible yet */
+            }
+            if (walletBal >= amountUsdc) break;
+            await new Promise((r) => setTimeout(r, 1000));
+          }
+          if (walletBal < amountUsdc) {
+            throw new Error(`Faucet gives ${j.amount ?? 1000} USDC — deposit that much or less`);
+          }
         }
         setTxStatus("Funding session (approve in wallet)…");
         const fundTx = new Transaction().add(
