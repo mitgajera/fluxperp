@@ -51,43 +51,51 @@ function wallet(kp: Keypair): anchor.Wallet {
   return { publicKey: kp.publicKey, payer: kp, signTransaction: async (t: any) => { t.partialSign(kp); return t; }, signAllTransactions: async (ts: any[]) => { ts.forEach((t) => t.partialSign(kp)); return ts; } } as any;
 }
 
-function loadMaker(): Keypair {
-  const path = join(__dirname, ".maker.json");
+function loadKp(name: string): Keypair {
+  const path = join(__dirname, name);
   if (existsSync(path)) return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(path, "utf8"))));
   const kp = Keypair.generate();
   writeFileSync(path, JSON.stringify(Array.from(kp.secretKey)));
   return kp;
 }
 
+// taker bot — periodically takes liquidity so the market actually prints trades
+const TAKER_ENABLED = process.env.MM_TAKER !== "0";
+const TAKER_INTERVAL = Number(process.env.MM_TAKER_MS || 2200);
+const TAKER_CAPITAL = Number(process.env.MM_TAKER_CAPITAL || 500_000);
+
 const l1 = new Connection(L1_RPC, "confirmed");
 const erConn = new Connection(ER_RPC, { wsEndpoint: ER_WS, commitment: "confirmed" });
-const maker = loadMaker();
+const maker = loadKp(".maker.json");
+const taker = loadKp(".taker.json");
 const l1p = new Program<Fluxperp>(idl as Fluxperp, new anchor.AnchorProvider(l1, wallet(maker), { commitment: "confirmed" }));
 const erp = new Program<Fluxperp>(idl as Fluxperp, new anchor.AnchorProvider(erConn, wallet(maker), { commitment: "confirmed" }));
+const l1pT = new Program<Fluxperp>(idl as Fluxperp, new anchor.AnchorProvider(l1, wallet(taker), { commitment: "confirmed" }));
+const erpT = new Program<Fluxperp>(idl as Fluxperp, new anchor.AnchorProvider(erConn, wallet(taker), { commitment: "confirmed" }));
 
 async function isDelegated(a: PublicKey) {
   const i = await l1.getAccountInfo(a);
   return !!i && i.owner.equals(DELEG);
 }
 
-async function ensureSetup(mint: PublicKey) {
-  if ((await l1.getBalance(maker.publicKey)) < 0.05 * LAMPORTS_PER_SOL) {
-    await l1.confirmTransaction(await l1.sendTransaction(new Transaction().add(SystemProgram.transfer({ fromPubkey: main.publicKey, toPubkey: maker.publicKey, lamports: 0.2 * LAMPORTS_PER_SOL })), [main]), "confirmed");
+async function ensureSetupFor(kp: Keypair, prog: Program<Fluxperp>, mint: PublicKey, capital: number) {
+  if ((await l1.getBalance(kp.publicKey)) < 0.05 * LAMPORTS_PER_SOL) {
+    await l1.confirmTransaction(await l1.sendTransaction(new Transaction().add(SystemProgram.transfer({ fromPubkey: main.publicKey, toPubkey: kp.publicKey, lamports: 0.2 * LAMPORTS_PER_SOL })), [main]), "confirmed");
   }
-  const ata = getAssociatedTokenAddressSync(mint, maker.publicKey);
-  const cap = BigInt(Math.round(CAPITAL * 1e6));
+  const ata = getAssociatedTokenAddressSync(mint, kp.publicKey);
+  const cap = BigInt(Math.round(capital * 1e6));
   if (!(await l1.getAccountInfo(ata))) {
-    await l1.confirmTransaction(await l1.sendTransaction(new Transaction().add(createAssociatedTokenAccountIdempotentInstruction(main.publicKey, ata, maker.publicKey, mint)), [main]), "confirmed");
+    await l1.confirmTransaction(await l1.sendTransaction(new Transaction().add(createAssociatedTokenAccountIdempotentInstruction(main.publicKey, ata, kp.publicKey, mint)), [main]), "confirmed");
     await mintTo(l1, main, mint, ata, main, cap);
   }
-  if (!(await l1.getAccountInfo(collOf(maker.publicKey)))) {
-    await l1p.methods.initializeCollateral().accountsStrict({ user: maker.publicKey, collateral: collOf(maker.publicKey), systemProgram: SystemProgram.programId }).rpc();
-    await l1p.methods.depositCollateral(new anchor.BN(cap.toString())).accountsStrict({ user: maker.publicKey, collateral: collOf(maker.publicKey), userTokenAccount: ata, vault, tokenProgram: TOKEN }).rpc();
+  if (!(await l1.getAccountInfo(collOf(kp.publicKey)))) {
+    await prog.methods.initializeCollateral().accountsStrict({ user: kp.publicKey, collateral: collOf(kp.publicKey), systemProgram: SystemProgram.programId }).rpc();
+    await prog.methods.depositCollateral(new anchor.BN(cap.toString())).accountsStrict({ user: kp.publicKey, collateral: collOf(kp.publicKey), userTokenAccount: ata, vault, tokenProgram: TOKEN }).rpc();
   }
-  if (!(await l1.getAccountInfo(posOf(maker.publicKey)))) await l1p.methods.initializePosition(MARKET).accountsStrict({ user: maker.publicKey, marketConfig, position: posOf(maker.publicKey), systemProgram: SystemProgram.programId }).rpc();
-  if (!(await l1.getAccountInfo(trigOf(maker.publicKey)))) await l1p.methods.initializeTriggers(MARKET).accountsStrict({ user: maker.publicKey, marketConfig, triggers: trigOf(maker.publicKey), systemProgram: SystemProgram.programId }).rpc();
-  if (!(await isDelegated(collOf(maker.publicKey)))) await l1p.methods.delegateCollateral().accountsPartial({ payer: maker.publicKey, collateral: collOf(maker.publicKey) }).rpc();
-  if (!(await isDelegated(posOf(maker.publicKey)))) await l1p.methods.delegatePosition(MARKET).accountsPartial({ payer: maker.publicKey, position: posOf(maker.publicKey) }).rpc();
+  if (!(await l1.getAccountInfo(posOf(kp.publicKey)))) await prog.methods.initializePosition(MARKET).accountsStrict({ user: kp.publicKey, marketConfig, position: posOf(kp.publicKey), systemProgram: SystemProgram.programId }).rpc();
+  if (!(await l1.getAccountInfo(trigOf(kp.publicKey)))) await prog.methods.initializeTriggers(MARKET).accountsStrict({ user: kp.publicKey, marketConfig, triggers: trigOf(kp.publicKey), systemProgram: SystemProgram.programId }).rpc();
+  if (!(await isDelegated(collOf(kp.publicKey)))) await prog.methods.delegateCollateral().accountsPartial({ payer: kp.publicKey, collateral: collOf(kp.publicKey) }).rpc();
+  if (!(await isDelegated(posOf(kp.publicKey)))) await prog.methods.delegatePosition(MARKET).accountsPartial({ payer: kp.publicKey, position: posOf(kp.publicKey) }).rpc();
 }
 
 const f6 = (n: number) => new anchor.BN(Math.round(n * 1e6));
@@ -176,6 +184,29 @@ async function quote() {
   }
 }
 
+// Taker bot: alternate sides and sweep a small amount off the maker's book so the market
+// continuously prints trades (the FillLog updates -> the UI trades feed stays live).
+let takerLong = true;
+async function takerTrade() {
+  const ob: any = await erpT.account.orderbookState.fetch(orderbook);
+  const side = takerLong ? "long" : "short";
+  const opp = side === "long" ? ob.asks : ob.bids;
+  if (!opp.length) return;
+  takerLong = !takerLong;
+  const size = +(0.5 + Math.random() * 2.5).toFixed(3);
+  const owners = [...new Set(opp.map((o: any) => o.owner.toBase58()))] as string[];
+  const ix = await erpT.methods
+    .placeOrder(MARKET, side === "long" ? { long: {} } : { short: {} }, new anchor.BN(0), f6(size), { market: {} })
+    .accountsStrict({ taker: taker.publicKey, marketConfig, orderbook, fillLog, takerPosition: posOf(taker.publicKey), takerCollateral: collOf(taker.publicKey), riskEngine: null, marginProfile: null })
+    .remainingAccounts(ownerAccts(owners))
+    .instruction();
+  const tx = new Transaction().add(ix);
+  tx.feePayer = taker.publicKey;
+  tx.recentBlockhash = (await erConn.getLatestBlockhash("confirmed")).blockhash;
+  tx.sign(taker);
+  await erConn.sendRawTransaction(tx.serialize(), { skipPreflight: true, maxRetries: 2 }).catch(() => {});
+}
+
 const retry = async <T>(fn: () => Promise<T>, label: string): Promise<T> => {
   for (let i = 0; ; i++) {
     try {
@@ -194,7 +225,11 @@ process.on("unhandledRejection", (e) => console.error("unhandledRejection:", Str
   const mint = await retry(async () => (await getAccount(l1, vault)).mint, "vault read");
   console.log(`market-maker: maker=${maker.publicKey.toBase58().slice(0, 8)} mint=${mint.toBase58().slice(0, 8)} capital=${CAPITAL} USDC`);
   console.log("ensuring maker setup (fund/deposit/delegate)…");
-  await retry(() => ensureSetup(mint), "ensureSetup");
+  await retry(() => ensureSetupFor(maker, l1p, mint, CAPITAL), "ensureSetup(maker)");
+  if (TAKER_ENABLED) {
+    console.log("ensuring taker setup…");
+    await retry(() => ensureSetupFor(taker, l1pT, mint, TAKER_CAPITAL), "ensureSetup(taker)");
+  }
   console.log(`quoting every ${INTERVAL}ms · ${LEVELS} levels · ${SPREAD_BPS}bps step · base size ${SIZE}`);
   let busy = false;
   setInterval(async () => {
@@ -203,4 +238,15 @@ process.on("unhandledRejection", (e) => console.error("unhandledRejection:", Str
     try { await quote(); } catch (e) { console.error("quote err:", (e as Error).message.slice(0, 80)); }
     finally { busy = false; }
   }, INTERVAL);
+
+  if (TAKER_ENABLED) {
+    console.log(`taker trading every ${TAKER_INTERVAL}ms`);
+    let tbusy = false;
+    setInterval(async () => {
+      if (tbusy) return;
+      tbusy = true;
+      try { await takerTrade(); } catch (e) { console.error("taker err:", (e as Error).message.slice(0, 80)); }
+      finally { tbusy = false; }
+    }, TAKER_INTERVAL);
+  }
 })();

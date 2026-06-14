@@ -16,6 +16,7 @@ app/out
 *-keypair.json
 *.pem
 scripts/.maker.json
+scripts/.taker.json
 
 # Tooling / OS / editor
 .yarn
